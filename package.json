@@ -7,7 +7,8 @@
     "start": "node index.js",
     "watch": "cross-env NODE_ENV=development nodemon --ignore 'public/' index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "webpack": "webpack"
   },
   "repository": {
     "type": "git",
@@ -28,10 +29,14 @@
     "@babel/cli": "^7.4.4",
     "@babel/core": "^7.4.5",
     "@babel/preset-env": "^7.4.5",
-    "browserify": "^16.2.3",
+    "@babel/preset-es2015": "^7.0.0-beta.53",
+    "babel-loader": "^8.0.6",
+    "css-loader": "^3.0.0",
     "eslint": "^5.16.0",
     "eslint-config-airbnb-base": "^13.2.0",
     "eslint-plugin-import": "^2.18.0",
-    "nodemon": "^1.19.1"
+    "nodemon": "^1.19.1",
+    "webpack": "^4.35.2",
+    "webpack-cli": "^3.3.5"
   }
 }
