@@ -1,5 +1,5 @@
 const listener = (ws) => {
-  ws.send('WebSocket server is alive!')
+  ws.send('')
 }
 
 module.exports = listener

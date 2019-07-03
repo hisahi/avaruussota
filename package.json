@@ -1,6 +1,6 @@
 {
   "name": "avaruussota",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "online multiplayer space shooter game",
   "main": "index.js",
   "scripts": {
@@ -23,6 +23,9 @@
   "dependencies": {
     "dotenv": "^8.0.0",
     "express": "^4.17.1",
+    "jsonwebtoken": "^8.5.1",
+    "nedb": "^1.8.0",
+    "thenify": "^3.3.0",
     "ws": "^7.0.1"
   },
   "devDependencies": {
