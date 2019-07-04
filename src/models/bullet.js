@@ -1,46 +1,46 @@
-const Datastore = require('nedb')
+const Datastore = require('nedb-async-await').Datastore
 const Counter = require('../utils/counter')
 const thenify = require('thenify')
-const db = new Datastore()
+const db = Datastore()
 const bulletid = new Counter()
 
 const template = () => ({
   posX: 0, posY: 0,           // position X, Y
   velX: 0, velY: 0,           // velocity X, Y
-  dist: 0                     // distance taken
+  dist: 0,                    // distance taken
+  shooter: null,
+
+  dead: false
 })
 
-const asyncFind = thenify(db.find)
-const asyncFindOne = thenify(db.findOne)
-const asyncInsert = thenify(db.insert)
-const asyncUpdate = thenify(db.update)
-const asyncRemove = thenify(db.remove)
-
-const create = async () => {
-  const doc = template()
-  doc['_id'] = bulletid.next()
-  return await asyncInsert(doc)
+const create = async (ship, data) => {
+  let doc = template()
+  doc._id = bulletid.next()
+  doc.shooter = ship._id
+  doc = {...doc, ...data}
+  return await db.insert(doc)
 }
 
 const getOne = async (model) => {
-  return await asyncFindOne(model)
+  return await db.findOne(model)
 }
 
 const getAll = async (model) => {
-  return await asyncFind(model)
+  return await db.find(model)
 }
 
 const put = async (doc) => {
-  return await asyncUpdate({ _id: doc._id }, doc)
+  return await db.update({ _id: doc._id }, doc)
 }
 
 const remove = async (model) => {
-  return await asyncRemove(model)
+  return await db.remove(model)
 }
 
-const makePublic = async (bullet) => {
+const makePublic = (bullet) => {
   const newBullet = { ...bullet }
   delete newBullet.dist
+  delete newBullet.dead
   return newBullet
 }
 

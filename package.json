@@ -1,11 +1,11 @@
 {
   "name": "avaruussota",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "online multiplayer space shooter game",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "watch": "cross-env NODE_ENV=development nodemon --ignore 'public/' index.js",
+    "watch": "cross-env NODE_ENV=development nodemon --ignore 'js/' index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint .",
     "webpack": "webpack"
@@ -25,6 +25,7 @@
     "express": "^4.17.1",
     "jsonwebtoken": "^8.5.1",
     "nedb": "^1.8.0",
+    "nedb-async-await": "^0.1.2",
     "thenify": "^3.3.0",
     "ws": "^7.0.1"
   },
@@ -34,6 +35,7 @@
     "@babel/preset-env": "^7.4.5",
     "@babel/preset-es2015": "^7.0.0-beta.53",
     "babel-loader": "^8.0.6",
+    "cross-env": "^5.2.0",
     "css-loader": "^3.0.0",
     "eslint": "^5.16.0",
     "eslint-config-airbnb-base": "^13.2.0",
