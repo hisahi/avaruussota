@@ -1,14 +1,14 @@
-const TICKS_PER_SECOND = 30
+const TICKS_PER_SECOND = 24
 const MAX_SHIP_VELOCITY = 32 / TICKS_PER_SECOND
 const MIN_SHIP_VELOCITY = 0.01
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 2
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 2.5))
-const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 120))
+const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 const MAX_BULLET_DISTANCE = 56
 const DELAY_BETWEEN_BULLETS_MS = 250
 
 const getAccelMul = (accelTimeMs) => { // time in milliseconds
-  return 0.0125 + 0.0000125 * accelTimeMs
+  return 0.05 + 0.000025 * accelTimeMs
 }
 
 const checkMinVelocity = (ship) => {
@@ -25,6 +25,10 @@ const checkMaxVelocity = (ship) => {
     ship.velX *= MAX_SHIP_VELOCITY / v
     ship.velY *= MAX_SHIP_VELOCITY / v
   }
+}
+
+const getPlanets = () => {
+  return [] /// TODO
 }
 
 const accel = (ship, accelTimeMs) => {
@@ -54,4 +58,5 @@ module.exports = {
   DELAY_BETWEEN_BULLETS_MS,
   accel,
   inertia,
-  brake }
+  brake,
+  getPlanets }

@@ -8,6 +8,7 @@ const ws = new WebSocket(`ws://${here.hostname}:${here.port}${here.pathname}`)
 const tps = physics.TICKS_PER_SECOND
 const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
+const TICK_MS = 1000 / tps
 
 let token = null
 let self = null
@@ -23,30 +24,25 @@ let bullets = []
 let turn_left_ramp = 0
 let turn_right_ramp = 0
 
+let last_partial = null
+let send_turn = false
+
 const send = (msg) => {
   if (token) {
     ws.send(`${token} ${msg}`)
   }
 }
 
-setInterval(() => {
-  let new_angle = self.orient
-
-  if (turn_left && !turn_right) {
-    new_angle -= turn_left_ramp * TURN_UNIT
-    turn_left_ramp = Math.min(1, turn_left_ramp + 0.1)
-    accelStart = chron.timeMs()
-  } else if (turn_right && !turn_left) {
-    new_angle += turn_right_ramp * TURN_UNIT
-    turn_right_ramp = Math.min(1, turn_right_ramp + 0.1)
-    accelStart = chron.timeMs()
+const serverTick = () => {
+  if (send_turn) {
+    send(`control ${JSON.stringify([self.orient, accel, brake])}`)
+    send_turn = false
   }
-
-  if (new_angle != self.orient) {
-    self.orient = new_angle
-    send(`turn ${new_angle}`)
+  
+  if (firing) {
+    send('fire')
   }
-
+  
   if (accel) {
     physics.accel(self, chron.timeMs() - accelStart)
   }
@@ -54,9 +50,38 @@ setInterval(() => {
     physics.brake(self)
   }
   physics.inertia(self)
-  self.posX += self.velX
-  self.posY += self.velY
-}, 1000 / tps)
+}
+setInterval(serverTick, TICK_MS)
+
+const partialTick = (delta) => {
+  const t = 1.0 * delta / TICK_MS
+
+  // turning
+  if (turn_left && !turn_right) {
+    self.orient -= turn_left_ramp * TURN_UNIT * t
+    turn_left_ramp = Math.min(1, turn_left_ramp + t * 0.1)
+    accelStart = chron.timeMs()
+    send_turn = true
+  } else if (turn_right && !turn_left) {
+    self.orient += turn_right_ramp * TURN_UNIT * t
+    turn_right_ramp = Math.min(1, turn_right_ramp + t * 0.1)
+    accelStart = chron.timeMs()
+    send_turn = true
+  }
+  
+  // interpolate
+  self.posX += t * self.velX
+  self.posY += t * self.velY
+
+  for (const ship of ships) {
+    ship.posX += t * ship.velX
+    ship.posY += t * ship.velY
+  }
+  for (const bullet of bullets) {
+    bullet.posX += t * bullet.velX
+    bullet.posY += t * bullet.velY
+  }
+}
 
 window.addEventListener('keydown', (e) => {
   if (!token || dead) {
@@ -66,10 +91,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code == 'KeyW') {
     accel = true
     self.accel = accelStart = chron.timeMs()
-    send('accel_on')
+    sendTurn = true
   } else if (e.code == 'KeyS') {
     brake = true
-    send('brake_on')
+    sendTurn = true
   } else if (e.code == 'KeyA') {
     turn_left = true
   } else if (e.code == 'KeyD') {
@@ -87,10 +112,10 @@ window.addEventListener('keyup', (e) => {
   if (e.code == 'KeyW') {
     accel = false
     self.accel = null
-    send('accel_off')
+    sendTurn = true
   } else if (e.code == 'KeyS') {
     brake = false
-    send('brake_off')
+    sendTurn = true
   } else if (e.code == 'KeyA') {
     turn_left_ramp = 0
     turn_left = false
@@ -107,14 +132,17 @@ window.addEventListener('blur', (e) => {
     return
   }
 
-  send('accel_off')
-  send('brake_off')
   accel = false
   self.accel = null
   brake = false
   turn_left = false
   turn_right = false
   firing = false
+  send_turn = true
+}, true)
+
+window.addEventListener('beforeupload', (e) => {
+  send('disconnect')
 }, true)
 
 const drawShip = (ship, scale) => {
@@ -127,15 +155,15 @@ const drawShip = (ship, scale) => {
   let [x3, y3] = p3
   let [x4, y4] = p4
 
-  x1 = cx + ship.posX - self.posX + x1 * scale
-  x2 = cx + ship.posX - self.posX + x2 * scale
-  x3 = cx + ship.posX - self.posX + x3 * scale
-  x4 = cx + ship.posX - self.posX + x4 * scale
+  x1 = cx + (self.posX - ship.posX + x1) * scale
+  x2 = cx + (self.posX - ship.posX + x2) * scale
+  x3 = cx + (self.posX - ship.posX + x3) * scale
+  x4 = cx + (self.posX - ship.posX + x4) * scale
 
-  y1 = cy + ship.posY - self.posY + y1 * scale
-  y2 = cy + ship.posY - self.posY + y2 * scale
-  y3 = cy + ship.posY - self.posY + y3 * scale
-  y4 = cy + ship.posY - self.posY + y4 * scale
+  y1 = cy + (self.posY - ship.posY + y1) * scale
+  y2 = cy + (self.posY - ship.posY + y2) * scale
+  y3 = cy + (self.posY - ship.posY + y3) * scale
+  y4 = cy + (self.posY - ship.posY + y4) * scale
 
   ctx.strokeStyle = '#fff'
   ctx.beginPath()
@@ -157,17 +185,17 @@ const drawShip = (ship, scale) => {
     let xo = (Math.random() - 0.5) * scale / 4;
     let yo = (Math.random() - 0.5) * scale / 4;
 
-    x1 = cx + ship.posX - self.posX + x1 * scale
-    x2 = cx + ship.posX - self.posX + x2 * scale
-    x3 = cx + ship.posX - self.posX + x3 * scale
-    x4 = cx + ship.posX - self.posX + x4 * scale
-    x5 = cx + ship.posX - self.posX + x5 * scale
+    x1 = cx + (self.posX - ship.posX + x1) * scale
+    x2 = cx + (self.posX - ship.posX + x2) * scale
+    x3 = cx + (self.posX - ship.posX + x3) * scale
+    x4 = cx + (self.posX - ship.posX + x4) * scale
+    x5 = cx + (self.posX - ship.posX + x5) * scale
   
-    y1 = cy + ship.posY - self.posY + y1 * scale
-    y2 = cy + ship.posY - self.posY + y2 * scale
-    y3 = cy + ship.posY - self.posY + y3 * scale
-    y4 = cy + ship.posY - self.posY + y4 * scale
-    y5 = cy + ship.posY - self.posY + y5 * scale
+    y1 = cy + (self.posY - ship.posY + y1) * scale
+    y2 = cy + (self.posY - ship.posY + y2) * scale
+    y3 = cy + (self.posY - ship.posY + y3) * scale
+    y4 = cy + (self.posY - ship.posY + y4) * scale
+    y5 = cy + (self.posY - ship.posY + y5) * scale
 
     x3 += xo
     y3 += yo
@@ -190,11 +218,8 @@ const drawBullet = (bullet, scale) => {
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
 
-  let x = bullet.posX
-  let y = bullet.posY
-
-  x = cx + bullet.posX - self.posX + x * scale
-  y = cy + bullet.posY - self.posY + y * scale
+  const x = cx + (self.posX - bullet.posX) * scale
+  const y = cy + (self.posY - bullet.posY) * scale
 
   ctx.fillStyle = '#fff'
   ctx.beginPath()
@@ -202,19 +227,21 @@ const drawBullet = (bullet, scale) => {
   ctx.fill()
 }
 
-const frame = () => {
+const frame = (time) => {
   ctx.canvas.width = window.innerWidth
   ctx.canvas.height = window.innerHeight
   const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * (1 
     / physics.MAX_BULLET_DISTANCE)
-  
-  if (firing) {
-    send('fire')
-  }
 
   if (self == null) {
     return
   }
+
+  if (last_partial != null) {
+    delta = time - last_partial
+    partialTick(delta)
+  }
+  last_partial = time
 
   const xm = ((self.posX % GRID_SIZE) + GRID_SIZE) % GRID_SIZE
   const ym = ((self.posY % GRID_SIZE) + GRID_SIZE) % GRID_SIZE
@@ -301,13 +328,13 @@ ws.addEventListener('message', (e) => {
         self.posY = obj.posY;
       }
       if (!accel && obj.accel !== null) {
-        ws.send('accel_off');
+        send_turn = true
       } else if (accel && obj.accel === null) {
-        ws.send('accel_on');
+        send_turn = true
       } else if (!brake && obj.brake !== null) {
-        ws.send('brake_off');
+        send_turn = true
       } else if (brake && obj.brake === null) {
-        ws.send('brake_on');
+        send_turn = true
       }
     }
   } else if (cmd === 'unrecognized') {
@@ -345,10 +372,7 @@ ws.addEventListener('message', (e) => {
 //      remove_bullet BULLET_ID
 //      nearby [LIST_OF_SHIPS, LIST_OF_BULLETS]
 // message types (client -> server), must be preceded with token:
-//      accel_on
-//      accel_off
-//      brake_on
-//      brake_off
-//      turn NEW_ORIENTATION
+//      disconnect
+//      control [DIRECTION, ACCEL, BRAKE]
 //      fire
 //      special_weapon

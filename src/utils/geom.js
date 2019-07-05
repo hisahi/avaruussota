@@ -18,6 +18,9 @@ const wrapRadianAngle = (angle) => {
 
 const rotatePoint = (s, c, x, y) => [x * c - y * s, x * s + y * c]
 
+const rotatePointOffset = (s, c, x, y, xo, yo) => 
+  [xo + x * c - y * s, yo + x * s + y * c]
+
 const getShipPoints = (ship) => {
   const s = Math.sin(ship.orient)
   const c = Math.cos(ship.orient)
@@ -28,13 +31,27 @@ const getShipPoints = (ship) => {
     rotatePoint(s, c,  0   , -1   ),
     rotatePoint(s, c, -1   , +1.5 )
   ]
-  /*
+}
+
+const getRealShipPoints = (ship) => {
+  const points = getShipPoints(ship)
   return [
-    [      s,           c    ], // (0, 1)
-    [1.5 * s + c, 1.5 * c - s], // (1, -1.5)
-    [     -s,          -c    ], // (0, -1)
-    [1.5 * s - c, 1.5 * c + s]] // (-1, 1.5)
-    */
+    [points[0][0] + ship.posX, points[0][1] + ship.posY],
+    [points[1][0] + ship.posX, points[1][1] + ship.posY],
+    [points[2][0] + ship.posX, points[2][1] + ship.posY],
+    [points[3][0] + ship.posX, points[3][1] + ship.posY]
+  ]
+}
+
+const getCollisionPoints = (ship) => {
+  const s = Math.sin(ship.orient)
+  const c = Math.cos(ship.orient)
+  
+  return [
+    rotatePointOffset(s, c,  0   , 0    , ship.posX, ship.posY),
+    rotatePointOffset(s, c, +0.5 , +0.75, ship.posX, ship.posY),
+    rotatePointOffset(s, c, -0.5 , +0.75, ship.posX, ship.posY)
+  ]
 }
 
 const getThrusterPoints = (ship) => {
@@ -48,18 +65,12 @@ const getThrusterPoints = (ship) => {
     rotatePoint(s, c, -0.5 , +1.25),
     rotatePoint(s, c,  0   , +1.75),
   ]
-  /*
-  return [
-    [       -s          ,        -c          ], // (0, -1)
-    [-1.25 * s + 0.5 * c, -1.25 * c - 0.5 * s], // (0.5, -1.25)
-    [   -2 * s          ,    -2 * c          ], // (0, -2)
-    [-1.25 * s - 0.5 * c, -1.25 * c + 0.5 * s], // (0.5, -1.25)
-    [-1.75 * s          , -1.75 * c          ]] // (0, -1.75)
-    */
 }
 
 module.exports = { 
   pointInTriangle, 
   wrapRadianAngle, 
   getShipPoints, 
+  getRealShipPoints, 
+  getCollisionPoints,
   getThrusterPoints }

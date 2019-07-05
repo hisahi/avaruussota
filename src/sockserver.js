@@ -17,13 +17,18 @@ const onMessage = (ws, game, handle, shipId) => {
         return
       }
 
-      game.getShipFromId(shipId).then((ship) => {
-        if (ship === null) {
-          return ws.send('unrecognized')
-        }
+      const ship = game.getShipFromId(shipId)
+      if (ship === null) {
+        return ws.send('unrecognized')
+      }
 
-        handle(ship, command, args)
-      })
+      if (command == 'disconnect') {
+        game.leavePlayer(ship)
+        game.disconnectSocket(ws)
+        return
+      }
+
+      handle(ship, command, args)
     }
   }
 }
@@ -31,12 +36,13 @@ const onMessage = (ws, game, handle, shipId) => {
 const onConnectFactory = (wss) => {
   const game = require('./game')(wss)
 
-  setInterval(() => game.deltaTick().then(() => {}), 
+  setInterval(() => game.deltaTick(), 
     1000 / physics.TICKS_PER_SECOND)
 
   setInterval(function ping() {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) {
+        console.log(`ping timeout: ${ws}`)
         game.disconnectSocket(ws)
         return ws.terminate()
       }
@@ -44,19 +50,18 @@ const onConnectFactory = (wss) => {
       ws.isAlive = false
       ws.ping(noop)
     })
-  }, 30000)
+  }, 5000)
 
   return (ws) => {
     // create ship and token
-    game.newPlayer().then((ship) => {
-      const token = jwt.sign(ship._id, JWT_SECRET)
-      game.setLastSocket(ship, ws)
-      ws.on('pong', () => { this.isAlive = true })
-      ws.on('close', () => { game.disconnectSocket(ws) })
-      ws.send('your_token ' + token)
-      ws.on('message', onMessage(ws, game, handler(game), ship._id))
-      ws.send('you ' + JSON.stringify(ship))
-    })
+    const ship = game.newPlayer()
+    const token = jwt.sign(ship._id, JWT_SECRET)
+    game.setLastSocket(ship, ws)
+    ws.on('pong', () => { ws.isAlive = true })
+    ws.on('close', () => { game.disconnectSocket(ws) })
+    ws.send('your_token ' + token)
+    ws.on('message', onMessage(ws, game, handler(game), ship._id))
+    ws.send('you ' + JSON.stringify(ship))
   }
 }
 
