@@ -11,6 +11,8 @@ const newShip = () => ({
   velX: 0, velY: 0,           // velocity X, Y
   orient: 0,                  // radians, clockwise from 0 = up
 
+  name: '',
+  score: 0,
   accel: null,
   brake: null,
   lastFired: 0,
@@ -101,7 +103,7 @@ const gameFactory = (wss) => {
         const d3 = Math.hypot(p3[0] - bullet.posX, p3[1] - bullet.posY)
 
         // triangle checks
-        if (d1 < 0.75 || d2 < 0.25 || d3 < 0.25) {
+        if (d1 < 1.2 || d2 < 0.6 || d3 < 0.6) {
           handleShipBulletCollision(ship, bullet)
           break // one collision per bullet at most
         }
@@ -164,6 +166,7 @@ const gameFactory = (wss) => {
   }
 
   const findShipPlanetCollisions = () => {
+    planets, handleShipPlanetCollision /// TODO
   }
 
   const killShip = (ship) => {
@@ -186,6 +189,8 @@ const gameFactory = (wss) => {
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
     if (Math.hypot(dx, dy) > (physics.MAX_SHIP_VELOCITY / 4)) {
+      lastSocket[ship1._id].send(`defeated_collision ${ship2.name}`)
+      lastSocket[ship2._id].send(`defeated_collision ${ship1.name}`)
       killShip(ship1)
       killShip(ship2)
     } else {
@@ -196,12 +201,18 @@ const gameFactory = (wss) => {
   }
 
   const handleShipBulletCollision = (ship, bullet) => {
+    const shooter = ships[bullet.shooter]
+    if (shooter) {
+      lastSocket[ship._id].send(`defeated ${shooter.name}`)
+      ++shooter.score
+    }
     killShip(ship)
     killBullet(bullet)
   }
 
   const handleShipPlanetCollision = (ship, planet) => {
     if (Math.hypot(ship.velX, ship.velY) > (physics.MAX_SHIP_VELOCITY / 4)) {
+      lastSocket[ship._id].send(`defeated_planet`)
       killShip(ship)
     } else {
       // collision
@@ -344,7 +355,6 @@ const gameFactory = (wss) => {
         shooter: ship._id
       }
       bullets[bullet._id] = bullet
-      console.log(Object.keys(bullets).length)
 
       ship.lastFired = now
       ships[ship._id] = ship
