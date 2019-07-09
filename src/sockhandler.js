@@ -10,6 +10,8 @@ const handlerFactory = (game) => {
       let [angle, accel, brake] = JSON.parse(args)
       angle = geom.wrapRadianAngle(angle)
       return game.handleControl(ship, angle, accel, brake)
+    } else if (cmd == 'nick') {
+      return game.handleNick(ship, args)
     }
 
     const func = commands[cmd]

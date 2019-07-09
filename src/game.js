@@ -48,7 +48,6 @@ const makeBulletPublic = (bullet) => {
 const gameFactory = (wss) => {
   let ships = {}
   let bullets = {}
-  const planets = physics.getPlanets()
   let lastTick = null
   let lastSocket = {}
 
@@ -65,12 +64,29 @@ const gameFactory = (wss) => {
     return ship
   }
 
+  const randomSign = () => {
+    return 2 * ((2 * Math.random()) | 0) - 1
+  }
+
   const spawn = (ship) => {
-    // eventually on planets a short but sufficient distance away
-    // from other players
-    ship.posX = 0
-    ship.posY = 0
-    ship.orient = 0
+    let baseX = 0
+    let baseY = 0
+    if (ships.length) {
+      const randShip = ships[(ships.length * Math.random()) | 0]
+      baseX = randShip.posX
+      baseY = randShip.posY
+    }
+    baseX += physics.MAX_BULLET_DISTANCE * randomSign()
+    baseY += physics.MAX_BULLET_DISTANCE * randomSign()
+    const planets = physics.getPlanets(baseX, baseY)
+    if (planets.length) {
+      const planet = planets[(planets.length * Math.random()) | 0]
+      latchPlanetWithAngle(ship, planet, Math.random() * 2 * Math.PI)
+    } else {
+      ship.posX = baseX
+      ship.posY = baseY
+      ship.orient = 0
+    }
   }
 
   const getShipFromId = (id) => {
@@ -91,6 +107,7 @@ const gameFactory = (wss) => {
   }
 
   const checkBulletCollision = (shipIds, bullet) => {
+    const planets = physics.getPlanets(bullet.posX, bullet.posY)
     for (const shipId of shipIds) {
       const ship = ships[shipId]
       // 1 unit = ship length from "head" to "tail"
@@ -109,6 +126,13 @@ const gameFactory = (wss) => {
         }
       }
     }
+    for (const planet of planets) {
+      if (Math.hypot(planet.x - bullet.posX, planet.y - bullet.posY) < 
+        planet.radius) {
+        killBullet(bullet)
+        return
+      }
+    }
   }
 
   const moveBullets = (mul) => {
@@ -121,6 +145,7 @@ const gameFactory = (wss) => {
         continue
       }
 
+      physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
 
       bullet.posX += mul / 2 * bullet.velX
       bullet.posY += mul / 2 * bullet.velY
@@ -166,7 +191,26 @@ const gameFactory = (wss) => {
   }
 
   const findShipPlanetCollisions = () => {
-    planets, handleShipPlanetCollision /// TODO
+    const shipIds = Object.keys(ships)
+    const collisions = []
+
+    for (const shipId of shipIds) {
+      const ship = ships[shipId]
+      const planets = physics.getPlanets(ship.posX, ship.posY)
+      for (const planet of planets)  {
+        if (Math.hypot(ship.posX - planet.x, ship.posY - planet.y) <
+          (planet.radius + 1)) {
+          collisions.push([ship, planet])
+          break
+        }
+      }
+    }
+    
+    for (const [ship, planet] of collisions) { 
+      if (!ship.dead) {
+        handleShipPlanetCollision(ship, planet)
+      }
+    }
   }
 
   const killShip = (ship) => {
@@ -210,15 +254,41 @@ const gameFactory = (wss) => {
     killBullet(bullet)
   }
 
+  const latchPlanet = (ship, planet) => {
+    const planetAngle = Math.atan2(planet.x - ship.posX,
+      planet.y - ship.posY) + Math.PI
+    latchPlanetWithAngle(ship, planet, planetAngle)
+  }
+
+  const latchPlanetWithAngle = (ship, planet, angle) => {
+    ship.velX = 0
+    ship.velY = 0
+    ship.posX = planet.x + (planet.radius + 1.125) * Math.sin(angle)
+    ship.posY = planet.y + (planet.radius + 1.125) * Math.cos(angle)
+    ship.orient = -angle
+    if (lastSocket[ship._id]) {
+      lastSocket[ship._id].send(`set_orient ${-angle}`)
+    }
+  }
+
   const handleShipPlanetCollision = (ship, planet) => {
-    if (Math.hypot(ship.velX, ship.velY) > (physics.MAX_SHIP_VELOCITY / 4)) {
-      lastSocket[ship._id].send(`defeated_planet`)
+    const v = Math.hypot(ship.velX, ship.velY)
+    if (v > (physics.MAX_SHIP_VELOCITY / 3)) {
+      lastSocket[ship._id].send('defeated_planet')
       killShip(ship)
+    } else if (!ship.accel && v > 0 && v < physics.LATCH_VELOCITY) {
+      latchPlanet(ship, planet)
     } else {
-      // collision
-      const dx = ship.posX - planet.posX
-      const dy = ship.posY - planet.posY
-      dx, dy /// TODO: reflect velocity over normal of (dx, dy)
+      // slow collision
+      const playerAngle = Math.atan2(ship.velX, ship.velY)
+      const planetAngle = Math.atan2(planet.x - ship.posX,
+        planet.y - ship.posY)
+      const diffAngle = playerAngle - planetAngle + Math.PI
+      ship.velX = v * Math.sin(diffAngle) * 0.9
+      ship.velY = v * Math.cos(diffAngle) * 0.9
+      ships[ship._id] = ship
+      ship.posX += (v / 8) * (ship.posX - planet.x)
+      ship.posY += (v / 8) * (ship.posY - planet.y)
     }
   }
 
@@ -245,6 +315,8 @@ const gameFactory = (wss) => {
     }
     physics.inertia(ship)
     ships[ship._id] = ship
+    
+    physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY))
   }
 
   const shipAcceleration = () => {
@@ -381,6 +453,15 @@ const gameFactory = (wss) => {
     ships[ship._id] = ship
   }
 
+  const handleNick = (ship, args) => {
+    const name = args.slice(0, 20)
+    if (!ship.name) {
+      ship.name = name
+      console.log(`joined player ${name}`)
+      ships[ship._id] = ship
+    }
+  }
+
   return { 
     newPlayer, 
     leavePlayer,
@@ -389,7 +470,8 @@ const gameFactory = (wss) => {
     setLastSocket,
     disconnectSocket,
     handleControl,
-    handleFire
+    handleFire,
+    handleNick
   }
 }
 

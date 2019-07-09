@@ -19,7 +19,7 @@ canvas {
   right: 0;
   bottom: 0;
 }
-#dialogbox {
+#dialogbox, #nick {
   background: #222;
   color: #fff;
   font-family: monospace;

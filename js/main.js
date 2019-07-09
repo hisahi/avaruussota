@@ -1,6 +1,7 @@
 const physics = require('../src/physics')
 const geom = require('../src/utils/geom')
 const chron = require('../src/utils/chron')
+const LCG = require('../src/utils/lcg')
 const canvas = document.getElementById('screen')
 const ctx = canvas.getContext('2d')
 const here = document.location
@@ -8,7 +9,9 @@ const tps = physics.TICKS_PER_SECOND
 const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
 const TICK_MS = 1000 / tps
+const PLANET_SPIN_SPEED = 0.02
 
+let lcg = new LCG(0)
 let inGame = false
 let ws = null
 let token = null
@@ -25,7 +28,9 @@ let bullets = []
 let turn_left_ramp = 0
 let turn_right_ramp = 0
 let lines = []
+let planets = []
 let tpf = 1
+let planetAngle = 0
 
 let last_partial = null
 let send_turn = false
@@ -67,6 +72,9 @@ const joinGame = () => {
           window.requestAnimationFrame(frame)
         }
         token = args
+        const nick = document.getElementById('nick').value
+          || toString((100000000 * Math.random()) | 0)
+        send(`nick ${nick}`)
       } else if (cmd === 'you') {
         const obj = JSON.parse(args)
         if (self === null) {
@@ -95,7 +103,10 @@ const joinGame = () => {
           } else if (brake && obj.brake === null) {
             send_turn = true
           }
+          self.name = obj.name
         }
+      } else if (cmd === 'set_orient') {
+        self.orient = parseFloat(args)
       } else if (cmd === 'unrecognized') {
         leaveGame()
       } else if (cmd === 'nearby') {
@@ -103,19 +114,19 @@ const joinGame = () => {
       } else if (cmd === 'defeated') {
         hideLose()
         leaveGame()
-        document.getElementById('defeat').style.display = 'block'
+        document.getElementById('defeat').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
         document.getElementById('defeatname').innerHTML = args
       } else if (cmd === 'defeated_collision') {
         hideLose()
         leaveGame()
-        document.getElementById('defeatcrash').style.display = 'block'
+        document.getElementById('defeatcrash').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
         document.getElementById('defeatname').innerHTML = args
       } else if (cmd === 'defeated_planet') {
         hideLose()
         leaveGame()
-        document.getElementById('defeatplanet').style.display = 'block'
+        document.getElementById('defeatplanet').style.display = 'inline'
       } else if (cmd === 'kill_ship') {
         const matching = ships.find(ship => ship._id === args)
         if (matching !== null) {
@@ -140,6 +151,11 @@ const leaveGame = () => {
   ws = null
   token = null
   inGame = false
+  accel = false
+  brake = false
+  turn_left = false
+  turn_right = false
+  firing = false
   showDialog()
 }
 
@@ -170,6 +186,12 @@ const serverTick = () => {
     physics.brake(self)
   }
   physics.inertia(self)
+  planets = physics.getPlanets(self.posX, self.posY)
+  physics.gravityShip(self, planets)
+
+  for (const bullet of bullets) {
+    physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
+  }
 }
 setInterval(serverTick, TICK_MS)
 
@@ -274,12 +296,15 @@ const drawShip = (ship, scale) => {
   let [x2, y2] = p2
   let [x3, y3] = p3
   let [x4, y4] = p4
+  let [x0, y0] = [0, 0]
 
+  x0 = cx + (self.posX - ship.posX) * scale
   x1 = cx + (self.posX - ship.posX + x1) * scale
   x2 = cx + (self.posX - ship.posX + x2) * scale
   x3 = cx + (self.posX - ship.posX + x3) * scale
   x4 = cx + (self.posX - ship.posX + x4) * scale
 
+  y0 = cy + (self.posY - ship.posY) * scale
   y1 = cy + (self.posY - ship.posY + y1) * scale
   y2 = cy + (self.posY - ship.posY + y2) * scale
   y3 = cy + (self.posY - ship.posY + y3) * scale
@@ -332,6 +357,11 @@ const drawShip = (ship, scale) => {
     ctx.lineTo(x5, y5)
     ctx.stroke()
   }
+
+  ctx.font = '18px monospace'
+  ctx.fillStyle = 'rgba(255,255,255,0.75)'
+  ctx.textAlign = 'center'
+  ctx.fillText(ship.name, x0, y0 - 2.75 * scale)
 }
 
 const drawBullet = (bullet, scale) => {
@@ -374,6 +404,36 @@ const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
 
   // x, y, xr, yr, angle, r, alpha, vx, vy, vangle
   return { x, y, xr, yr, angle, alpha: 100, r, vx, vy, vangle }
+}
+
+const computePlanetAngle = (planet, angle, scale, cx, cy) => {
+  const x = planet.x + Math.sin(angle) * planet.radius
+  const y = planet.y + Math.cos(angle) * planet.radius
+
+  return [cx + (self.posX - x) * scale, cy + (self.posY - y) * scale]
+}
+
+const drawPlanet = (planet, scale) => {
+  const cx = ctx.canvas.width / 2
+  const cy = ctx.canvas.height / 2
+  ctx.strokeStyle = '#fff'
+  ctx.lineWidth = 1
+
+  lcg.reseed(planet.seed)
+  const gon = Math.abs(lcg.randomInt()) % 24 + 14
+
+  let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * 
+    (2 * (lcg.randomInt() & 1) - 1)
+  let [x, y] = computePlanetAngle(planet, angle, scale, cx, cy)
+
+  ctx.beginPath()
+  ctx.moveTo(x, y)
+  for (let i = 0; i < gon; ++i) {
+    angle += (2 * Math.PI) / gon;
+    [x, y] = computePlanetAngle(planet, angle, scale, cx, cy)
+    ctx.lineTo(x, y)
+  }
+  ctx.stroke()
 }
 
 const explosion = (ship) => {
@@ -460,6 +520,11 @@ const frame = (time) => {
     drawBullet(bullet, unitSize)
   }
 
+  // draw planets
+  for (const planet of planets) {
+    drawPlanet(planet, unitSize)
+  }
+
   // draw lines
   for (const line of lines) {
     drawLine(line, unitSize)
@@ -472,8 +537,10 @@ const frame = (time) => {
     line.vangle *= 0.99
     line.alpha -= 1
   }
-
   lines = lines.filter(line => line.alpha > 0)
+
+  planetAngle += PLANET_SPIN_SPEED
+  planetAngle %= 2 * Math.PI
 
   window.requestAnimationFrame(frame)
 }
@@ -494,7 +561,9 @@ showDialog()
 //      remove_ship SHIP_ID
 //      remove_bullet BULLET_ID
 //      nearby [LIST_OF_SHIPS, LIST_OF_BULLETS]
+//      set_orient ORIENT
 // message types (client -> server), must be preceded with token:
+//      nick NICK
 //      disconnect
 //      control [DIRECTION, ACCEL, BRAKE]
 //      fire

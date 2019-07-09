@@ -99,6 +99,8 @@ const geom = __webpack_require__(/*! ../src/utils/geom */ "./src/utils/geom.js")
 
 const chron = __webpack_require__(/*! ../src/utils/chron */ "./src/utils/chron.js");
 
+const LCG = __webpack_require__(/*! ../src/utils/lcg */ "./src/utils/lcg.js");
+
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 const here = document.location;
@@ -106,6 +108,8 @@ const tps = physics.TICKS_PER_SECOND;
 const GRID_SIZE = 10;
 const TURN_UNIT = 2 * Math.PI / tps;
 const TICK_MS = 1000 / tps;
+const PLANET_SPIN_SPEED = 0.02;
+let lcg = new LCG(0);
 let inGame = false;
 let ws = null;
 let token = null;
@@ -122,7 +126,9 @@ let bullets = [];
 let turn_left_ramp = 0;
 let turn_right_ramp = 0;
 let lines = [];
+let planets = [];
 let tpf = 1;
+let planetAngle = 0;
 let last_partial = null;
 let send_turn = false;
 
@@ -162,6 +168,8 @@ const joinGame = () => {
         }
 
         token = args;
+        const nick = document.getElementById('nick').value || toString(100000000 * Math.random() | 0);
+        send(`nick ${nick}`);
       } else if (cmd === 'you') {
         const obj = JSON.parse(args);
 
@@ -195,7 +203,11 @@ const joinGame = () => {
           } else if (brake && obj.brake === null) {
             send_turn = true;
           }
+
+          self.name = obj.name;
         }
+      } else if (cmd === 'set_orient') {
+        self.orient = parseFloat(args);
       } else if (cmd === 'unrecognized') {
         leaveGame();
       } else if (cmd === 'nearby') {
@@ -203,19 +215,19 @@ const joinGame = () => {
       } else if (cmd === 'defeated') {
         hideLose();
         leaveGame();
-        document.getElementById('defeat').style.display = 'block';
+        document.getElementById('defeat').style.display = 'inline';
         document.getElementById('defeatname').style.display = 'inline';
         document.getElementById('defeatname').innerHTML = args;
       } else if (cmd === 'defeated_collision') {
         hideLose();
         leaveGame();
-        document.getElementById('defeatcrash').style.display = 'block';
+        document.getElementById('defeatcrash').style.display = 'inline';
         document.getElementById('defeatname').style.display = 'inline';
         document.getElementById('defeatname').innerHTML = args;
       } else if (cmd === 'defeated_planet') {
         hideLose();
         leaveGame();
-        document.getElementById('defeatplanet').style.display = 'block';
+        document.getElementById('defeatplanet').style.display = 'inline';
       } else if (cmd === 'kill_ship') {
         const matching = ships.find(ship => ship._id === args);
 
@@ -243,6 +255,11 @@ const leaveGame = () => {
   ws = null;
   token = null;
   inGame = false;
+  accel = false;
+  brake = false;
+  turn_left = false;
+  turn_right = false;
+  firing = false;
   showDialog();
 };
 
@@ -275,6 +292,12 @@ const serverTick = () => {
   }
 
   physics.inertia(self);
+  planets = physics.getPlanets(self.posX, self.posY);
+  physics.gravityShip(self, planets);
+
+  for (const bullet of bullets) {
+    physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+  }
 };
 
 setInterval(serverTick, TICK_MS);
@@ -376,10 +399,13 @@ const drawShip = (ship, scale) => {
   let [x2, y2] = p2;
   let [x3, y3] = p3;
   let [x4, y4] = p4;
+  let [x0, y0] = [0, 0];
+  x0 = cx + (self.posX - ship.posX) * scale;
   x1 = cx + (self.posX - ship.posX + x1) * scale;
   x2 = cx + (self.posX - ship.posX + x2) * scale;
   x3 = cx + (self.posX - ship.posX + x3) * scale;
   x4 = cx + (self.posX - ship.posX + x4) * scale;
+  y0 = cy + (self.posY - ship.posY) * scale;
   y1 = cy + (self.posY - ship.posY + y1) * scale;
   y2 = cy + (self.posY - ship.posY + y2) * scale;
   y3 = cy + (self.posY - ship.posY + y3) * scale;
@@ -426,6 +452,11 @@ const drawShip = (ship, scale) => {
     ctx.lineTo(x5, y5);
     ctx.stroke();
   }
+
+  ctx.font = '18px monospace';
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.textAlign = 'center';
+  ctx.fillText(ship.name, x0, y0 - 2.75 * scale);
 };
 
 const drawBullet = (bullet, scale) => {
@@ -480,6 +511,33 @@ const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
     vy,
     vangle
   };
+};
+
+const computePlanetAngle = (planet, angle, scale, cx, cy) => {
+  const x = planet.x + Math.sin(angle) * planet.radius;
+  const y = planet.y + Math.cos(angle) * planet.radius;
+  return [cx + (self.posX - x) * scale, cy + (self.posY - y) * scale];
+};
+
+const drawPlanet = (planet, scale) => {
+  const cx = ctx.canvas.width / 2;
+  const cy = ctx.canvas.height / 2;
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1;
+  lcg.reseed(planet.seed);
+  const gon = Math.abs(lcg.randomInt()) % 24 + 14;
+  let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * (2 * (lcg.randomInt() & 1) - 1);
+  let [x, y] = computePlanetAngle(planet, angle, scale, cx, cy);
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+
+  for (let i = 0; i < gon; ++i) {
+    angle += 2 * Math.PI / gon;
+    [x, y] = computePlanetAngle(planet, angle, scale, cx, cy);
+    ctx.lineTo(x, y);
+  }
+
+  ctx.stroke();
 };
 
 const explosion = ship => {
@@ -551,6 +609,11 @@ const frame = time => {
 
   for (const bullet of bullets) {
     drawBullet(bullet, unitSize);
+  } // draw planets
+
+
+  for (const planet of planets) {
+    drawPlanet(planet, unitSize);
   } // draw lines
 
 
@@ -566,6 +629,8 @@ const frame = time => {
   }
 
   lines = lines.filter(line => line.alpha > 0);
+  planetAngle += PLANET_SPIN_SPEED;
+  planetAngle %= 2 * Math.PI;
   window.requestAnimationFrame(frame);
 };
 
@@ -582,7 +647,9 @@ showDialog(); // message types (server -> client):
 //      remove_ship SHIP_ID
 //      remove_bullet BULLET_ID
 //      nearby [LIST_OF_SHIPS, LIST_OF_BULLETS]
+//      set_orient ORIENT
 // message types (client -> server), must be preceded with token:
+//      nick NICK
 //      disconnect
 //      control [DIRECTION, ACCEL, BRAKE]
 //      fire
@@ -595,16 +662,22 @@ showDialog(); // message types (server -> client):
   !*** ./src/physics.js ***!
   \************************/
 /*! no static exports found */
-/***/ (function(module, exports) {
+/***/ (function(module, exports, __webpack_require__) {
 
 const TICKS_PER_SECOND = 24;
 const MAX_SHIP_VELOCITY = 32 / TICKS_PER_SECOND;
 const MIN_SHIP_VELOCITY = 0.01;
+const LATCH_VELOCITY = 0.15;
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 2;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 2.5));
 const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90));
 const MAX_BULLET_DISTANCE = 56;
 const DELAY_BETWEEN_BULLETS_MS = 250;
+const PLANET_SEED = 1340985549;
+
+const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
+
+const PLANET_CHUNK_SIZE = MAX_BULLET_DISTANCE * 2 + 1;
 
 const getAccelMul = accelTimeMs => {
   // time in milliseconds
@@ -627,10 +700,41 @@ const checkMaxVelocity = ship => {
     ship.velX *= MAX_SHIP_VELOCITY / v;
     ship.velY *= MAX_SHIP_VELOCITY / v;
   }
+}; // planet: x, y, radius, seed
+
+
+const getPlanetsForChunk = (cx, cy) => {
+  const r = PLANET_CHUNK_SIZE;
+  const lcg = new LCG((PLANET_SEED ^ cx * 1173320513 ^ cy * 891693747) & 0xFFFFFFFF);
+  const xb = (cx + 0.5) * r;
+  const yb = (cy + 0.5) * r;
+  const xo = lcg.randomOffset() * (r / 4);
+  const yo = lcg.randomOffset() * (r / 4);
+  const radius = r / 24 + r / 8 * lcg.random();
+  const seed = lcg.randomInt();
+  return [{
+    x: xb + xo,
+    y: yb + yo,
+    radius,
+    seed
+  }];
 };
 
-const getPlanets = () => {
-  return []; /// TODO
+const getPlanets = (x, y) => {
+  const x1 = Math.floor((x - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
+  const y1 = Math.floor((y - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
+  const x2 = Math.floor((x + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
+  const y2 = Math.floor((y + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
+
+  if (x1 == x2 && y1 == y2) {
+    return getPlanetsForChunk(x1, y1);
+  } else if (x1 == x2) {
+    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x1, y2)];
+  } else if (y1 == y2) {
+    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x2, y1)];
+  } else {
+    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x2, y1), ...getPlanetsForChunk(x1, y2), ...getPlanetsForChunk(x2, y2)];
+  }
 };
 
 const accel = (ship, accelTimeMs) => {
@@ -652,15 +756,54 @@ const brake = ship => {
   checkMinVelocity(ship);
 };
 
+const gravityBullet = (bullet, planets) => {
+  for (const planet of planets) {
+    const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y);
+
+    if (d > planet.radius + 1.2 && d < planet.radius * 2.5) {
+      const dx = planet.x - bullet.posX;
+      const dy = planet.y - bullet.posY;
+      const d2 = Math.hypot(dx, dy);
+      const m = BULLET_VELOCITY * planet.radius ** 1.25 / (d2 * d2);
+      bullet.velX += m / d2 * dx;
+      bullet.velY += m / d2 * dy;
+    }
+  }
+
+  const d = Math.hypot(bullet.velX, bullet.velY);
+  bullet.velX *= BULLET_VELOCITY / d;
+  bullet.velY *= BULLET_VELOCITY / d;
+};
+
+const gravityShip = (ship, planets) => {
+  for (const planet of planets) {
+    const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
+
+    if (d > planet.radius + 1.2 && d < planet.radius * 2.5) {
+      const dx = planet.x - ship.posX;
+      const dy = planet.y - ship.posY;
+      const d2 = Math.hypot(dx, dy);
+      const m = MAX_SHIP_VELOCITY / 24 * planet.radius ** 1.5 / (d2 * d2);
+      ship.velX += m / d2 * dx;
+      ship.velY += m / d2 * dy;
+    }
+  }
+
+  checkMaxVelocity(ship);
+};
+
 module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
   BULLET_VELOCITY,
+  LATCH_VELOCITY,
   MAX_BULLET_DISTANCE,
   DELAY_BETWEEN_BULLETS_MS,
   accel,
   inertia,
   brake,
+  gravityBullet,
+  gravityShip,
   getPlanets
 };
 
@@ -738,6 +881,51 @@ module.exports = {
   getCollisionPoints,
   getThrusterPoints
 };
+
+/***/ }),
+
+/***/ "./src/utils/lcg.js":
+/*!**************************!*\
+  !*** ./src/utils/lcg.js ***!
+  \**************************/
+/*! no static exports found */
+/***/ (function(module, exports) {
+
+const LCG_A = 535426113;
+const LCG_C = 2258250855;
+
+class Generator {
+  constructor(seed) {
+    this.seed = seed & 0xFFFFFFFF;
+  }
+
+  reseed(seed) {
+    this.seed = seed & 0xFFFFFFFF;
+  }
+
+  randomInt() {
+    const val = this.seed;
+    this.seed = LCG_A * val + LCG_C & 0xFFFFFFFF;
+    return val;
+  }
+
+  random() {
+    let v = this.randomInt() / 2.0 ** 32;
+
+    if (v < 0) {
+      v += 1;
+    }
+
+    return v;
+  }
+
+  randomOffset() {
+    return 2 * this.random() - 1;
+  }
+
+}
+
+module.exports = Generator;
 
 /***/ })
 
