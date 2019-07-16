@@ -158,7 +158,14 @@ hideLose();
 const joinGame = () => {
   if (!inGame) {
     hideDialog();
-    ws = new WebSocket(`ws://${here.hostname}:${here.port}${here.pathname}`);
+    let wsproto = here.protocol.replace('http', 'ws');
+    let port = here.port;
+
+    if (port) {
+      port = `:${port}`;
+    }
+
+    ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
     inGame = true;
     ws.addEventListener('open', () => {
       dead = false;

@@ -61,7 +61,11 @@ const joinGame = () => {
   if (!inGame) {
     hideDialog()
     let wsproto = here.protocol.replace('http', 'ws')
-    ws = new WebSocket(`${wsproto}//${here.hostname}:${here.port}${here.pathname}`)
+    let port = here.port
+    if (port) {
+      port = `:${port}`
+    }
+    ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`)
     inGame = true
     
     ws.addEventListener('open', () => {
