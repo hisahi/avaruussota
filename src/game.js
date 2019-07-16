@@ -67,6 +67,11 @@ const gameFactory = (wss) => {
     rubberbandRadiusGoal = physics.getRubberbandRadius(Object.keys(ships).length)
     return ship
   }
+  
+  const welcome = (ship, ws) => {
+    ws.send(`leaderboard ${JSON.stringify(leaderboard)}`)
+    ship
+  }
 
   const randomSign = () => {
     return 2 * ((2 * Math.random()) | 0) - 1
@@ -74,7 +79,7 @@ const gameFactory = (wss) => {
 
   const isValidSpawn = (ship) => {
     const d = Math.hypot(ship.posX, ship.posY)
-    const min = physics.MAX_BULLET_DISTANCE * 2 / 3
+    const min = physics.MAX_BULLET_DISTANCE * 3 / 2
     if (d > Math.min(rubberbandRadius, rubberbandRadiusGoal)) {
       return false
     }
@@ -92,7 +97,7 @@ const gameFactory = (wss) => {
   const spawn = (ship) => {
     let baseX = 0
     let baseY = 0
-    let tries = 20
+    let tries = 32
     while (tries > 0) {
       if (ships.length) {
         const randShip = ships[(ships.length * Math.random()) | 0]
@@ -533,8 +538,11 @@ const gameFactory = (wss) => {
       return
     }
     
-    const name = args.slice(0, 20)
+    const name = args.slice(0, 20).trim()
     if (!ship.name) {
+      if (!name) {
+        name = 'null'
+      }
       ship.name = name
       console.log(`joined player ${name}`)
       ships[ship._id] = ship
@@ -543,6 +551,7 @@ const gameFactory = (wss) => {
 
   return { 
     newPlayer, 
+    welcome,
     leavePlayer,
     getShipFromId, 
     deltaTick,

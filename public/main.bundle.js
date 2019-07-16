@@ -167,18 +167,6 @@ const joinGame = () => {
 
     ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
     inGame = true;
-    ws.addEventListener('open', () => {
-      dead = false;
-    });
-    ws.addEventListener('close', () => {
-      if (!dead) {
-        hideLose();
-        document.getElementById('disconnected').style.display = 'inline';
-        leaveGame();
-      }
-
-      dead = true;
-    });
     ws.addEventListener('message', e => {
       const msg = e.data;
       let [cmd, ...args] = msg.split(' ');
@@ -190,7 +178,7 @@ const joinGame = () => {
         }
 
         token = args;
-        let nick = document.getElementById('nick').value;
+        let nick = document.getElementById('nick').value.trim();
 
         if (nick.length < 1) {
           nick = (100000000 * Math.random() | 0).toString();
@@ -232,6 +220,7 @@ const joinGame = () => {
           }
 
           self.name = obj.name;
+          document.getElementById('yourscore').textContent = self.score = obj.score;
         }
       } else if (cmd === 'players') {
         [playerCount, rubber] = JSON.parse(args);
@@ -274,6 +263,19 @@ const joinGame = () => {
       } else if (cmd === 'remove_bullet') {
         bullets = bullets.filter(bullet => bullet._id !== args);
       }
+    });
+    ws.addEventListener('open', () => {
+      dead = false;
+      ws.send('join');
+    });
+    ws.addEventListener('close', () => {
+      if (!dead) {
+        hideLose();
+        document.getElementById('disconnected').style.display = 'inline';
+        leaveGame();
+      }
+
+      dead = true;
     });
   }
 };
@@ -845,7 +847,7 @@ const gravityShip = (ship, planets) => {
 };
 
 const getRubberbandRadius = playerCount => {
-  return 150 * Math.sqrt(Math.max(playerCount, 1));
+  return 100 * Math.pow(Math.max(playerCount, 1), 0.4);
 };
 
 const rubberband = (ship, radius) => {
@@ -855,6 +857,11 @@ const rubberband = (ship, radius) => {
     const maxRadius = radius + RUBBERBAND_BUFFER;
     const baseX = -ship.posX / Math.hypot(ship.posX, ship.posY);
     const baseY = -ship.posY / Math.hypot(ship.posX, ship.posY);
+
+    if (distCenter > maxRadius) {
+      ship.velX = ship.velY = 0;
+    }
+
     ship.velX += baseX * 0.25 * MAX_SHIP_VELOCITY * ((distCenter - radius) / (maxRadius - radius)) ** 4;
     ship.velY += baseY * 0.25 * MAX_SHIP_VELOCITY * ((distCenter - radius) / (maxRadius - radius)) ** 4;
     checkMaxVelocity(ship);

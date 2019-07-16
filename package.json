@@ -1,6 +1,6 @@
 {
   "name": "avaruussota",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "online multiplayer space shooter game",
   "main": "index.js",
   "scripts": {

@@ -67,19 +67,6 @@ const joinGame = () => {
     }
     ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`)
     inGame = true
-    
-    ws.addEventListener('open', () => {
-      dead = false
-    })
-    
-    ws.addEventListener('close', () => {
-      if (!dead) {
-        hideLose()
-        document.getElementById('disconnected').style.display = 'inline'
-        leaveGame()
-      }
-      dead = true
-    })
 
     ws.addEventListener('message', (e) => {
       const msg = e.data
@@ -92,7 +79,7 @@ const joinGame = () => {
           window.requestAnimationFrame(frame)
         }
         token = args
-        let nick = document.getElementById('nick').value
+        let nick = document.getElementById('nick').value.trim()
         if (nick.length < 1) {
           nick = ((100000000 * Math.random()) | 0).toString()
         }
@@ -126,6 +113,7 @@ const joinGame = () => {
             send_turn = true
           }
           self.name = obj.name
+          document.getElementById('yourscore').textContent = self.score = obj.score
         }
       } else if (cmd === 'players') {
         [playerCount, rubber] = JSON.parse(args)
@@ -166,6 +154,20 @@ const joinGame = () => {
       } else if (cmd === 'remove_bullet') {
         bullets = bullets.filter(bullet => bullet._id !== args)
       }
+    })
+    
+    ws.addEventListener('open', () => {
+      dead = false
+      ws.send('join')
+    })
+    
+    ws.addEventListener('close', () => {
+      if (!dead) {
+        hideLose()
+        document.getElementById('disconnected').style.display = 'inline'
+        leaveGame()
+      }
+      dead = true
     })
   }
 }

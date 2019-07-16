@@ -8,7 +8,7 @@ const noop = (_) => _
 
 const onMessage = (ws, game, handle, shipId) => {
   return (msg) => {
-    if (msg.includes(' ')) {
+    if (msg.includes(' ') && shipId !== null) {
       let [token, command, ...args] = msg.split(' ')
       args = args.join(' ')
       const tokenId = jwt.verify(token, JWT_SECRET)
@@ -29,6 +29,14 @@ const onMessage = (ws, game, handle, shipId) => {
       }
 
       handle(ship, command, args)
+    } else if (msg == 'join') {
+      const ship = game.newPlayer()
+      const token = jwt.sign(ship._id, JWT_SECRET)
+      game.setLastSocket(ship, ws)
+      shipId = ship._id
+      ws.send('your_token ' + token)
+      ws.send('you ' + JSON.stringify(ship))
+      game.welcome(ship, ws)
     }
   }
 }
@@ -54,16 +62,9 @@ const onConnectFactory = (wss) => {
 
   return (ws) => {
     // create ship and token
-    const ship = game.newPlayer()
-    const token = jwt.sign(ship._id, JWT_SECRET)
-    game.setLastSocket(ship, ws)
     ws.on('pong', () => { ws.isAlive = true })
     ws.on('close', () => { game.disconnectSocket(ws) })
-    ws.send('')
-    ws.send('')
-    ws.send('your_token ' + token)
-    ws.on('message', onMessage(ws, game, handler(game), ship._id))
-    ws.send('you ' + JSON.stringify(ship))
+    ws.on('message', onMessage(ws, game, handler(game), null))
   }
 }
 

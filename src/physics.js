@@ -115,7 +115,7 @@ const gravityShip = (ship, planets) => {
 }
 
 const getRubberbandRadius = (playerCount) => {
-  return 150 * Math.sqrt(Math.max(playerCount, 1))
+  return 100 * Math.pow(Math.max(playerCount, 1), 0.4)
 }
 
 const rubberband = (ship, radius) => {
@@ -124,6 +124,9 @@ const rubberband = (ship, radius) => {
     const maxRadius = radius + RUBBERBAND_BUFFER
     const baseX = -ship.posX / Math.hypot(ship.posX, ship.posY)
     const baseY = -ship.posY / Math.hypot(ship.posX, ship.posY)
+    if (distCenter > maxRadius) {
+      ship.velX = ship.velY = 0
+    }
     ship.velX += baseX * 0.25 * MAX_SHIP_VELOCITY *
       ((distCenter - radius) / (maxRadius - radius)) ** 4
     ship.velY += baseY * 0.25 * MAX_SHIP_VELOCITY *
