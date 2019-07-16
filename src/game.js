@@ -225,6 +225,7 @@ const gameFactory = (wss) => {
 
     for (const shipId1 of shipIds) {
       const ship1 = ships[shipId1]
+      const [p1, p2, p3] = geom.getCollisionPoints(ship1)
       for (const shipId2 of shipIds) {
         if (shipId1 == shipId2) {
           continue
@@ -233,8 +234,10 @@ const gameFactory = (wss) => {
         
         if (Math.abs(ship1.posX - ship2.posX) < 2 &&
             Math.abs(ship1.posY - ship2.posY) < 2) {
-          const [p1, p2,   , p4] = geom.getRealShipPoints(ship1)
-          if (geom.pointInTriangle(p1, p2, p4, [ship2.posX, ship2.posY])) {
+          const [q1, q2,   , q4] = geom.getRealShipPoints(ship2)
+          if (geom.pointInTriangle(q1, q2, q4, p1)
+            || geom.pointInTriangle(q1, q2, q4, p2)
+            || geom.pointInTriangle(q1, q2, q4, p3)) {
             collisions.push([ship1, ship2])
           }
         } 
@@ -514,6 +517,10 @@ const gameFactory = (wss) => {
       return
     }
 
+    if (!isFinite(angle)) {
+      return
+    }
+
     if (ship.orient != angle && ship.accel !== null) {
       ship.accel = chron.timeMs()
     }
@@ -538,7 +545,7 @@ const gameFactory = (wss) => {
       return
     }
     
-    const name = args.slice(0, 20).trim()
+    let name = args.slice(0, 20).trim()
     if (!ship.name) {
       if (!name) {
         name = 'null'

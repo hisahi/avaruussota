@@ -22,6 +22,10 @@ const rotatePointOffset = (s, c, x, y, xo, yo) =>
   [xo + x * c - y * s, yo + x * s + y * c]
 
 const getShipPoints = (ship) => {
+  if (!ship) {
+    return []
+  }
+
   const s = Math.sin(ship.orient)
   const c = Math.cos(ship.orient)
 
@@ -34,6 +38,10 @@ const getShipPoints = (ship) => {
 }
 
 const getRealShipPoints = (ship) => {
+  if (!ship) {
+    return []
+  }
+
   const points = getShipPoints(ship)
   return [
     [points[0][0] + ship.posX, points[0][1] + ship.posY],
@@ -44,6 +52,10 @@ const getRealShipPoints = (ship) => {
 }
 
 const getCollisionPoints = (ship) => {
+  if (!ship) {
+    return []
+  }
+
   const s = Math.sin(ship.orient)
   const c = Math.cos(ship.orient)
   
@@ -55,6 +67,10 @@ const getCollisionPoints = (ship) => {
 }
 
 const getThrusterPoints = (ship) => {
+  if (!ship) {
+    return []
+  }
+
   const s = Math.sin(ship.orient)
   const c = Math.cos(ship.orient)
 
