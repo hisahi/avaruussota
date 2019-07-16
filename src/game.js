@@ -274,6 +274,7 @@ const gameFactory = (wss) => {
   const killShip = (ship) => {
     announce(`kill_ship ${ship._id}`)
     deleteShip(ship)
+    updateLeaderboard()
   }
 
   const deleteShip = (ship) => {
@@ -308,7 +309,6 @@ const gameFactory = (wss) => {
       lastSocket[ship._id].send(`defeated ${shooter.name}`)
       ++shooter.score
       ships[bullet.shooter] = shooter
-      updateLeaderboard()
     }
     killShip(ship)
     killBullet(bullet)
