@@ -31,16 +31,21 @@ let lines = []
 let planets = []
 let tpf = 1
 let planetAngle = 0
+let playerCount = 1
+let leaderboard = []
+let rubber = 150
 
 let last_partial = null
 let send_turn = false
 
 const showDialog = () => {
   document.getElementById('dialog').style.display = 'block'
+  document.getElementById('stats').style.display = 'none'
 }
 
 const hideDialog = () => {
   document.getElementById('dialog').style.display = 'none'
+  document.getElementById('stats').style.display = 'block'
 }
 
 const hideLose = () => {
@@ -48,6 +53,7 @@ const hideLose = () => {
   document.getElementById('defeatcrash').style.display = 'none'
   document.getElementById('defeatplanet').style.display = 'none'
   document.getElementById('defeatname').style.display = 'none'
+  document.getElementById('disconnected').style.display = 'none'
 }
 hideLose()
 
@@ -59,6 +65,15 @@ const joinGame = () => {
     
     ws.addEventListener('open', () => {
       dead = false
+    })
+    
+    ws.addEventListener('close', () => {
+      if (!dead) {
+        hideLose()
+        document.getElementById('disconnected').style.display = 'inline'
+        leaveGame()
+      }
+      dead = true
     })
 
     ws.addEventListener('message', (e) => {
@@ -72,8 +87,10 @@ const joinGame = () => {
           window.requestAnimationFrame(frame)
         }
         token = args
-        const nick = document.getElementById('nick').value
-          || toString((100000000 * Math.random()) | 0)
+        let nick = document.getElementById('nick').value
+        if (nick.length < 1) {
+          nick = ((100000000 * Math.random()) | 0).toString()
+        }
         send(`nick ${nick}`)
       } else if (cmd === 'you') {
         const obj = JSON.parse(args)
@@ -105,6 +122,12 @@ const joinGame = () => {
           }
           self.name = obj.name
         }
+      } else if (cmd === 'players') {
+        [playerCount, rubber] = JSON.parse(args)
+        document.getElementById('playerCountNum').textContent = playerCount
+      } else if (cmd === 'leaderboard') {
+        leaderboard = JSON.parse(args)
+        drawLeaderboard()
       } else if (cmd === 'set_orient') {
         self.orient = parseFloat(args)
       } else if (cmd === 'unrecognized') {
@@ -165,6 +188,30 @@ const send = (msg) => {
   }
 }
 
+const makeTd = (text) => {
+  const td = document.createElement('td')
+  td.textContent = text
+  return td
+}
+
+const makeTableRow = (lb) => {
+  const tr = document.createElement('tr')
+  tr.appendChild(makeTd(lb[0]))
+  tr.appendChild(makeTd(lb[1]))
+  return tr
+}
+
+const drawLeaderboard = () => {
+  const leaderBoardTable = document.getElementById('leaderboard')
+  const newBody = document.createElement('tbody')
+  
+  for (let i = 0; i < Math.min(10, leaderboard.length); ++i) {
+    newBody.appendChild(makeTableRow(leaderboard[i]))
+  }
+
+  leaderBoardTable.replaceChild(newBody, leaderBoardTable.childNodes[0])
+}
+
 const serverTick = () => {
   if (!ws || !self) {
     return
@@ -186,6 +233,7 @@ const serverTick = () => {
     physics.brake(self)
   }
   physics.inertia(self)
+  physics.rubberband(self, rubber)
   planets = physics.getPlanets(self.posX, self.posY)
   physics.gravityShip(self, planets)
 
@@ -458,12 +506,13 @@ const explosion = (ship) => {
     ship.posX, ship.posY, ship.velX, ship.velY))
   lines.push(createLine(x6, y6, x1, y1, 
     ship.posX, ship.posY, ship.velX, ship.velY))
-  console.log(lines)
 }
 
 const frame = (time) => {
   ctx.canvas.width = window.innerWidth
   ctx.canvas.height = window.innerHeight
+  const cx = ctx.canvas.width / 2
+  const cy = ctx.canvas.height / 2
   const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * (1 
     / physics.MAX_BULLET_DISTANCE)
 
@@ -482,6 +531,22 @@ const frame = (time) => {
 
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
+
+  const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
+    cy + self.posY * unitSize,
+    (rubber - 1) * unitSize,
+    cx + self.posX * unitSize,
+    cy + self.posY * unitSize,
+    (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize)
+  gradient.addColorStop(0, 'rgba(255,0,0,0)')
+  gradient.addColorStop(1, 'rgba(255,0,0,0.25)')
+  // draw mask
+  ctx.beginPath()
+  ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, 
+    rubber * unitSize, 0, 2 * Math.PI)
+  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
+  ctx.fillStyle = gradient
+  ctx.fill()
 
   // draw grid
   ctx.lineWidth = 1
@@ -547,24 +612,5 @@ const frame = (time) => {
 
 document.getElementById('btnplay').addEventListener('click', () => joinGame())
 
+leaveGame()
 showDialog()
-
-// message types (server -> client):
-//      your_token TOKEN
-//      you SHIP
-//      unrecognized
-//      collision_sound
-//      defeated WINNER_NAME
-//      defeated_collision WINNER_NAME
-//      defeated_planet
-//      kill_ship SHIP_ID
-//      remove_ship SHIP_ID
-//      remove_bullet BULLET_ID
-//      nearby [LIST_OF_SHIPS, LIST_OF_BULLETS]
-//      set_orient ORIENT
-// message types (client -> server), must be preceded with token:
-//      nick NICK
-//      disconnect
-//      control [DIRECTION, ACCEL, BRAKE]
-//      fire
-//      special_weapon

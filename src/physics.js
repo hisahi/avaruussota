@@ -7,6 +7,7 @@ const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SEC
 const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 const MAX_BULLET_DISTANCE = 56
 const DELAY_BETWEEN_BULLETS_MS = 250
+const RUBBERBAND_BUFFER = 80
 const PLANET_SEED = 1340985549
 const LCG = require('./utils/lcg')
 const PLANET_CHUNK_SIZE = MAX_BULLET_DISTANCE * 2 + 1
@@ -113,6 +114,24 @@ const gravityShip = (ship, planets) => {
   checkMaxVelocity(ship)
 }
 
+const getRubberbandRadius = (playerCount) => {
+  return 150 * Math.sqrt(Math.max(playerCount, 1))
+}
+
+const rubberband = (ship, radius) => {
+  const distCenter = Math.hypot(ship.posX, ship.posY)
+  if (distCenter > radius) {
+    const maxRadius = radius + RUBBERBAND_BUFFER
+    const baseX = -ship.posX / Math.hypot(ship.posX, ship.posY)
+    const baseY = -ship.posY / Math.hypot(ship.posX, ship.posY)
+    ship.velX += baseX * 0.25 * MAX_SHIP_VELOCITY *
+      ((distCenter - radius) / (maxRadius - radius)) ** 4
+    ship.velY += baseY * 0.25 * MAX_SHIP_VELOCITY *
+      ((distCenter - radius) / (maxRadius - radius)) ** 4
+    checkMaxVelocity(ship)
+  }
+}
+
 module.exports = {
   TICKS_PER_SECOND, 
   MAX_SHIP_VELOCITY,
@@ -120,9 +139,12 @@ module.exports = {
   LATCH_VELOCITY,
   MAX_BULLET_DISTANCE,
   DELAY_BETWEEN_BULLETS_MS,
+  RUBBERBAND_BUFFER,
   accel,
   inertia,
   brake,
   gravityBullet,
   gravityShip,
-  getPlanets }
+  rubberband,
+  getPlanets,
+  getRubberbandRadius }

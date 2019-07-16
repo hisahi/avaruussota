@@ -129,15 +129,20 @@ let lines = [];
 let planets = [];
 let tpf = 1;
 let planetAngle = 0;
+let playerCount = 1;
+let leaderboard = [];
+let rubber = 150;
 let last_partial = null;
 let send_turn = false;
 
 const showDialog = () => {
   document.getElementById('dialog').style.display = 'block';
+  document.getElementById('stats').style.display = 'none';
 };
 
 const hideDialog = () => {
   document.getElementById('dialog').style.display = 'none';
+  document.getElementById('stats').style.display = 'block';
 };
 
 const hideLose = () => {
@@ -145,6 +150,7 @@ const hideLose = () => {
   document.getElementById('defeatcrash').style.display = 'none';
   document.getElementById('defeatplanet').style.display = 'none';
   document.getElementById('defeatname').style.display = 'none';
+  document.getElementById('disconnected').style.display = 'none';
 };
 
 hideLose();
@@ -157,6 +163,15 @@ const joinGame = () => {
     ws.addEventListener('open', () => {
       dead = false;
     });
+    ws.addEventListener('close', () => {
+      if (!dead) {
+        hideLose();
+        document.getElementById('disconnected').style.display = 'inline';
+        leaveGame();
+      }
+
+      dead = true;
+    });
     ws.addEventListener('message', e => {
       const msg = e.data;
       let [cmd, ...args] = msg.split(' ');
@@ -168,7 +183,12 @@ const joinGame = () => {
         }
 
         token = args;
-        const nick = document.getElementById('nick').value || toString(100000000 * Math.random() | 0);
+        let nick = document.getElementById('nick').value;
+
+        if (nick.length < 1) {
+          nick = (100000000 * Math.random() | 0).toString();
+        }
+
         send(`nick ${nick}`);
       } else if (cmd === 'you') {
         const obj = JSON.parse(args);
@@ -206,6 +226,12 @@ const joinGame = () => {
 
           self.name = obj.name;
         }
+      } else if (cmd === 'players') {
+        [playerCount, rubber] = JSON.parse(args);
+        document.getElementById('playerCountNum').textContent = playerCount;
+      } else if (cmd === 'leaderboard') {
+        leaderboard = JSON.parse(args);
+        drawLeaderboard();
       } else if (cmd === 'set_orient') {
         self.orient = parseFloat(args);
       } else if (cmd === 'unrecognized') {
@@ -269,6 +295,30 @@ const send = msg => {
   }
 };
 
+const makeTd = text => {
+  const td = document.createElement('td');
+  td.textContent = text;
+  return td;
+};
+
+const makeTableRow = lb => {
+  const tr = document.createElement('tr');
+  tr.appendChild(makeTd(lb[0]));
+  tr.appendChild(makeTd(lb[1]));
+  return tr;
+};
+
+const drawLeaderboard = () => {
+  const leaderBoardTable = document.getElementById('leaderboard');
+  const newBody = document.createElement('tbody');
+
+  for (let i = 0; i < Math.min(10, leaderboard.length); ++i) {
+    newBody.appendChild(makeTableRow(leaderboard[i]));
+  }
+
+  leaderBoardTable.replaceChild(newBody, leaderBoardTable.childNodes[0]);
+};
+
 const serverTick = () => {
   if (!ws || !self) {
     return;
@@ -292,6 +342,7 @@ const serverTick = () => {
   }
 
   physics.inertia(self);
+  physics.rubberband(self, rubber);
   planets = physics.getPlanets(self.posX, self.posY);
   physics.gravityShip(self, planets);
 
@@ -554,12 +605,13 @@ const explosion = ship => {
   lines.push(createLine(x3, y3, x4, y4, ship.posX, ship.posY, ship.velX, ship.velY));
   lines.push(createLine(x4, y4, x6, y6, ship.posX, ship.posY, ship.velX, ship.velY));
   lines.push(createLine(x6, y6, x1, y1, ship.posX, ship.posY, ship.velX, ship.velY));
-  console.log(lines);
 };
 
 const frame = time => {
   ctx.canvas.width = window.innerWidth;
   ctx.canvas.height = window.innerHeight;
+  const cx = ctx.canvas.width / 2;
+  const cy = ctx.canvas.height / 2;
   const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * (1 / physics.MAX_BULLET_DISTANCE);
 
   if (!token || !self) {
@@ -575,7 +627,16 @@ const frame = time => {
   const xm = (self.posX % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
   const ym = (self.posY % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); // draw grid
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+  const gradient = ctx.createRadialGradient(cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber - 1) * unitSize, cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize);
+  gradient.addColorStop(0, 'rgba(255,0,0,0)');
+  gradient.addColorStop(1, 'rgba(255,0,0,0.25)'); // draw mask
+
+  ctx.beginPath();
+  ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, rubber * unitSize, 0, 2 * Math.PI);
+  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
+  ctx.fillStyle = gradient;
+  ctx.fill(); // draw grid
 
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#333';
@@ -635,25 +696,8 @@ const frame = time => {
 };
 
 document.getElementById('btnplay').addEventListener('click', () => joinGame());
-showDialog(); // message types (server -> client):
-//      your_token TOKEN
-//      you SHIP
-//      unrecognized
-//      collision_sound
-//      defeated WINNER_NAME
-//      defeated_collision WINNER_NAME
-//      defeated_planet
-//      kill_ship SHIP_ID
-//      remove_ship SHIP_ID
-//      remove_bullet BULLET_ID
-//      nearby [LIST_OF_SHIPS, LIST_OF_BULLETS]
-//      set_orient ORIENT
-// message types (client -> server), must be preceded with token:
-//      nick NICK
-//      disconnect
-//      control [DIRECTION, ACCEL, BRAKE]
-//      fire
-//      special_weapon
+leaveGame();
+showDialog();
 
 /***/ }),
 
@@ -673,6 +717,7 @@ const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SEC
 const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90));
 const MAX_BULLET_DISTANCE = 56;
 const DELAY_BETWEEN_BULLETS_MS = 250;
+const RUBBERBAND_BUFFER = 80;
 const PLANET_SEED = 1340985549;
 
 const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
@@ -792,6 +837,23 @@ const gravityShip = (ship, planets) => {
   checkMaxVelocity(ship);
 };
 
+const getRubberbandRadius = playerCount => {
+  return 150 * Math.sqrt(Math.max(playerCount, 1));
+};
+
+const rubberband = (ship, radius) => {
+  const distCenter = Math.hypot(ship.posX, ship.posY);
+
+  if (distCenter > radius) {
+    const maxRadius = radius + RUBBERBAND_BUFFER;
+    const baseX = -ship.posX / Math.hypot(ship.posX, ship.posY);
+    const baseY = -ship.posY / Math.hypot(ship.posX, ship.posY);
+    ship.velX += baseX * 0.25 * MAX_SHIP_VELOCITY * ((distCenter - radius) / (maxRadius - radius)) ** 4;
+    ship.velY += baseY * 0.25 * MAX_SHIP_VELOCITY * ((distCenter - radius) / (maxRadius - radius)) ** 4;
+    checkMaxVelocity(ship);
+  }
+};
+
 module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
@@ -799,12 +861,15 @@ module.exports = {
   LATCH_VELOCITY,
   MAX_BULLET_DISTANCE,
   DELAY_BETWEEN_BULLETS_MS,
+  RUBBERBAND_BUFFER,
   accel,
   inertia,
   brake,
   gravityBullet,
   gravityShip,
-  getPlanets
+  rubberband,
+  getPlanets,
+  getRubberbandRadius
 };
 
 /***/ }),

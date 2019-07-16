@@ -59,6 +59,8 @@ const onConnectFactory = (wss) => {
     game.setLastSocket(ship, ws)
     ws.on('pong', () => { ws.isAlive = true })
     ws.on('close', () => { game.disconnectSocket(ws) })
+    ws.send('')
+    ws.send('')
     ws.send('your_token ' + token)
     ws.on('message', onMessage(ws, game, handler(game), ship._id))
     ws.send('you ' + JSON.stringify(ship))

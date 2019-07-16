@@ -50,6 +50,9 @@ const gameFactory = (wss) => {
   let bullets = {}
   let lastTick = null
   let lastSocket = {}
+  let leaderboard = []
+  let rubberbandRadius = 150
+  let rubberbandRadiusGoal = 150
 
   const announce = (message) => {
     wss.clients.forEach((ws) => {
@@ -61,6 +64,7 @@ const gameFactory = (wss) => {
     const ship = newShip()
     spawn(ship)
     ships[ship._id] = ship
+    rubberbandRadiusGoal = physics.getRubberbandRadius(Object.keys(ships).length)
     return ship
   }
 
@@ -68,25 +72,62 @@ const gameFactory = (wss) => {
     return 2 * ((2 * Math.random()) | 0) - 1
   }
 
+  const isValidSpawn = (ship) => {
+    const d = Math.hypot(ship.posX, ship.posY)
+    const min = physics.MAX_BULLET_DISTANCE * 2 / 3
+    if (d > Math.min(rubberbandRadius, rubberbandRadiusGoal)) {
+      return false
+    }
+
+    for (const otherId of Object.keys(ships)) {
+      const other = ships[otherId]
+      if (Math.hypot(ship.posX - other.posX, ship.posY - other.posY) < min) {
+        return false
+      }
+    }
+
+    return true
+  }
+
   const spawn = (ship) => {
     let baseX = 0
     let baseY = 0
-    if (ships.length) {
-      const randShip = ships[(ships.length * Math.random()) | 0]
-      baseX = randShip.posX
-      baseY = randShip.posY
+    let tries = 20
+    while (tries > 0) {
+      if (ships.length) {
+        const randShip = ships[(ships.length * Math.random()) | 0]
+        baseX = randShip.posX
+        baseY = randShip.posY
+      }
+      baseX += physics.MAX_BULLET_DISTANCE * randomSign()
+      baseY += physics.MAX_BULLET_DISTANCE * randomSign()
+      const planets = physics.getPlanets(baseX, baseY)
+      if (planets.length) {
+        const planet = planets[(planets.length * Math.random()) | 0]
+        latchPlanetWithAngle(ship, planet, Math.random() * 2 * Math.PI)
+      } else {
+        ship.posX = baseX
+        ship.posY = baseY
+        ship.orient = 0
+      }
+      --tries
+      if (isValidSpawn(ship)) {
+        break
+      }
     }
-    baseX += physics.MAX_BULLET_DISTANCE * randomSign()
-    baseY += physics.MAX_BULLET_DISTANCE * randomSign()
-    const planets = physics.getPlanets(baseX, baseY)
-    if (planets.length) {
-      const planet = planets[(planets.length * Math.random()) | 0]
-      latchPlanetWithAngle(ship, planet, Math.random() * 2 * Math.PI)
-    } else {
-      ship.posX = baseX
-      ship.posY = baseY
-      ship.orient = 0
+  }
+
+  const updateLeaderboard = () => {
+    const players = []
+    for (const shipId of Object.keys(ships)) {
+      const ship = ships[shipId]
+      if (ship.score > 0) {
+        players.push([ship.name, ship.score])
+      }
     }
+    players.sort((a, b) => a[1] - b[1])
+    leaderboard = players.slice(0, 10)
+    announce(`leaderboard ${JSON.stringify(leaderboard)}`)
   }
 
   const getShipFromId = (id) => {
@@ -95,6 +136,8 @@ const gameFactory = (wss) => {
 
   const leavePlayer = (ship) => {
     deleteShip(ship)
+    updateLeaderboard()
+    rubberbandRadiusGoal = physics.getRubberbandRadius(Object.keys(ships).length)
   }
 
   const moveShips = (mul) => {
@@ -147,8 +190,18 @@ const gameFactory = (wss) => {
 
       physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
 
-      bullet.posX += mul / 2 * bullet.velX
-      bullet.posY += mul / 2 * bullet.velY
+      bullet.posX += mul / 4 * bullet.velX
+      bullet.posY += mul / 4 * bullet.velY
+
+      checkBulletCollision(shipIds, bullet)
+
+      bullet.posX += mul / 4 * bullet.velX
+      bullet.posY += mul / 4 * bullet.velY
+
+      checkBulletCollision(shipIds, bullet)
+
+      bullet.posX += mul / 4 * bullet.velX
+      bullet.posY += mul / 4 * bullet.velY
 
       checkBulletCollision(shipIds, bullet)
 
@@ -249,6 +302,8 @@ const gameFactory = (wss) => {
     if (shooter) {
       lastSocket[ship._id].send(`defeated ${shooter.name}`)
       ++shooter.score
+      ships[bullet.shooter] = shooter
+      updateLeaderboard()
     }
     killShip(ship)
     killBullet(bullet)
@@ -314,6 +369,7 @@ const gameFactory = (wss) => {
       physics.brake(ship)
     }
     physics.inertia(ship)
+    physics.rubberband(ship, rubberbandRadius)
     ships[ship._id] = ship
     
     physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY))
@@ -356,7 +412,17 @@ const gameFactory = (wss) => {
       if (ws) {
         ws.send(`you ${JSON.stringify(self)}`)
         ws.send(`nearby ${JSON.stringify([nearbyShips, nearbyBullets])}`)
+        ws.send(`players ${JSON.stringify([Object.keys(ships).length, 
+          rubberbandRadius])}`)
       }
+    }
+  }
+
+  const updateRubberband = () => {
+    if (rubberbandRadiusGoal > rubberbandRadius) {
+      rubberbandRadius = Math.min(rubberbandRadiusGoal, rubberbandRadius + 0.2)
+    } else if (rubberbandRadiusGoal < rubberbandRadius) {
+      rubberbandRadius = Math.max(rubberbandRadiusGoal, rubberbandRadius - 0.05)
     }
   }
 
@@ -378,6 +444,7 @@ const gameFactory = (wss) => {
     moveShips(0.25)
     findShipShipCollisions()
 
+    updateRubberband()
     announceNearby()
   }
 
@@ -412,6 +479,10 @@ const gameFactory = (wss) => {
   }
 
   const handleFire = (ship) => {
+    if (!ship || ship.dead !== false) {
+      return
+    }
+
     const now = chron.timeMs()
     if ((now - ship.lastFired) >= physics.DELAY_BETWEEN_BULLETS_MS) {
       const [p1, , , ] = geom.getShipPoints(ship)
@@ -434,6 +505,10 @@ const gameFactory = (wss) => {
   }
 
   const handleControl = (ship, angle, accel, brake) => {
+    if (!ship || ship.dead !== false) {
+      return
+    }
+
     if (ship.orient != angle && ship.accel !== null) {
       ship.accel = chron.timeMs()
     }
@@ -454,6 +529,10 @@ const gameFactory = (wss) => {
   }
 
   const handleNick = (ship, args) => {
+    if (!ship || ship.dead !== false) {
+      return
+    }
+    
     const name = args.slice(0, 20)
     if (!ship.name) {
       ship.name = name

@@ -7,14 +7,23 @@
   </head>
   <body>
     <canvas id="screen"></canvas>
+    <div id="stats">
+      <p id="playerCount"><span id="playerCountNum"></span> online</p>
+      <table id="leaderboard">
+        <tbody>
+        </tbody>
+      </table> 
+    </div>
     <div id="dialog">
       <div id="dialogbox">
         <h1>avaruussota</h1>
         <p>
           <span id="defeat">you were defeated by</span><span id="defeatcrash">you crashed with</span> <span id="defeatname"></span>
           <span id="defeatplanet">you crash-landed on a planet</span>
+          <span id="disconnected">lost connection to server</span>
         </p>
         set name: <input type="text" id="nick" maxlength=20 /><br />
+        <br />
         <button type="button" id="btnplay">play</button>
       </div>
     </div>

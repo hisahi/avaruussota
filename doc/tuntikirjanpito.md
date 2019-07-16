@@ -8,5 +8,5 @@
 | 5.7.  | 5    | erinäisiä korjauksia, interpolaatio, ampuminen          |
 | 6.7.  | 5    | frontend koodia, törmäysten korjaaminen                 |
 | 9.7.  | 8    | planeetat, nimet, frontend                              |
-| yht   | 41   |                                                         |
-
+| 16.7. | 8    | frontend, rubberbanding, heroku                         |
+| yht   | 49   |                                                         |

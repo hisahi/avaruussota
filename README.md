@@ -1,7 +1,7 @@
 # avaruussota
 An online multiplayer space shooter game.
 
-* Online (TODO)
+* [Online](https://avaruussota.herokuapp.com)
 * Game instructions (TODO)
 * [Install manual](https://github.com/hisahi/avaruussota/blob/master/doc/install.md)
 
