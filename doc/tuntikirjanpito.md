@@ -9,5 +9,5 @@
 | 6.7.  | 5    | frontend koodia, törmäysten korjaaminen                 |
 | 9.7.  | 8    | planeetat, nimet, frontend                              |
 | 16.7. | 9    | frontend, rubberbanding, heroku                         |
-| 17.7. | 5    | bug fixes, performance improvements, powerups           |
-| yht   | 55   |                                                         |
+| 17.7. | 8    | bug fixes, performance improvements, powerups           |
+| yht   | 58   |                                                         |

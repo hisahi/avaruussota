@@ -60,7 +60,7 @@ const onConnectFactory = (wss) => {
       ws.isAlive = false
       ws.ping(noop)
     })
-  }, 5000)
+  }, 10000)
 
   return (ws) => {
     // create ship and token

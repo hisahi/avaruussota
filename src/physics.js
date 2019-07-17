@@ -2,17 +2,18 @@ const GRAV = 6.67e-11
 const TICKS_PER_SECOND = 24
 const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND
 const MIN_SHIP_VELOCITY = 0.01
-const LATCH_VELOCITY = 0.15
-const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.5
+const LATCH_VELOCITY = 0.2
+const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
 const INERTIA_MUL = 1
-  // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
-const MAX_BULLET_DISTANCE = 64
+// (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
+const MAX_BULLET_DISTANCE = 50
 const DELAY_BETWEEN_BULLETS_MS = 250
 const RUBBERBAND_BUFFER = 80
-const PLANET_SEED = 1340985553
 const LCG = require('./utils/lcg')
 const PLANET_CHUNK_SIZE = MAX_BULLET_DISTANCE * 2 + 1
+
+let PLANET_SEED = 1340985553
 
 const getAccelMul = (accelTimeMs) => { // time in milliseconds
   return 0.05 + 0.000025 * accelTimeMs
@@ -27,11 +28,24 @@ const checkMinVelocity = (ship) => {
 }
 
 const checkMaxVelocity = (ship) => {
+  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health)
   const v = Math.hypot(ship.velX, ship.velY)
-  if (v > MAX_SHIP_VELOCITY) {
-    ship.velX *= MAX_SHIP_VELOCITY / v
-    ship.velY *= MAX_SHIP_VELOCITY / v
+  if (v > maxvel) {
+    ship.velX *= maxvel / v
+    ship.velY *= maxvel / v
   }
+}
+
+const getPlanetSeed = () => {
+  return PLANET_SEED
+}
+
+const setPlanetSeed = (seed) => {
+  PLANET_SEED = seed
+}
+
+const newPlanetSeed = () => {
+  PLANET_SEED = Math.floor(Math.random() * 2147483647)
 }
 
 // planet: x, y, radius, seed
@@ -50,23 +64,43 @@ const getPlanetsForChunk = (cx, cy) => {
 
 const getPlanets = (x, y) => {
   const x1 = Math.floor((x - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
+  const x2 = Math.floor(x / PLANET_CHUNK_SIZE)
+  const x3 = Math.floor((x + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
   const y1 = Math.floor((y - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  const x2 = Math.floor((x + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  const y2 = Math.floor((y + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  if (x1 == x2 && y1 == y2) {
-    return getPlanetsForChunk(x1, y1)
-  } else if (x1 == x2) {
-    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x1, y2)]
-  } else if (y1 == y2) {
-    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x2, y1)]
-  } else {
-    return [...getPlanetsForChunk(x1, y1), ...getPlanetsForChunk(x2, y1),
-      ...getPlanetsForChunk(x1, y2), ...getPlanetsForChunk(x2, y2)]
+  const y2 = Math.floor(y / PLANET_CHUNK_SIZE)
+  const y3 = Math.floor((y + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
+
+  const xu = []
+  const yu = []
+  let planets = []
+
+  xu.push(x2)
+  if (x1 != x2) {
+    xu.push(x1)
   }
+  if (x2 != x3) {
+    xu.push(x3)
+  }
+
+  yu.push(y2)
+  if (y1 != y2) {
+    yu.push(y1)
+  }
+  if (y2 != y3) {
+    yu.push(y3)
+  }
+
+  for (const x of xu) {
+    for (const y of yu) {
+      planets = [...planets, ...getPlanetsForChunk(x, y)]
+    }
+  }
+  
+  return planets
 }
 
 const accel = (ship, accelTimeMs) => {
-  const accelMul = getAccelMul(accelTimeMs)
+  const accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health)
   ship.velX += accelMul * Math.sin(-ship.orient)
   ship.velY += accelMul * Math.cos(-ship.orient)
   checkMaxVelocity(ship)
@@ -84,14 +118,20 @@ const brake = (ship) => {
   checkMinVelocity(ship)
 }
 
+const recoil = (ship) => {
+  ship.velX -= 0.02 * Math.sin(-ship.orient)
+  ship.velY -= 0.02 * Math.cos(-ship.orient)
+  checkMaxVelocity(ship)
+}
+
 const gravityBullet = (bullet, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y)
-    if (d > (planet.radius + 1.2) && d < planet.radius * 2.5) {
+    if (d > (planet.radius + 1.2) && d < planet.radius * 3) {
       const dx = planet.x - bullet.posX
       const dy = planet.y - bullet.posY
       const r2 = Math.hypot(dx, dy) ** 2
-      const f = GRAV * 1e+11 / r2
+      const f = GRAV * 8e+9 / r2 * planet.radius
       bullet.velX += f * dx
       bullet.velY += f * dy
     }
@@ -104,11 +144,12 @@ const gravityBullet = (bullet, planets) => {
 const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y)
-    if (d > (planet.radius + 1.5) && d < planet.radius * 2.5) {
+    if (d > (planet.radius + 1) && d < planet.radius * 3) {
       const dx = planet.x - ship.posX
       const dy = planet.y - ship.posY
       const r2 = Math.hypot(dx, dy) ** 2
-      const f = GRAV * 1e+10 / r2 / (ship.accel !== null ? 5 : 1)
+      const f = GRAV * 8e+8 * planet.radius / r2 / (
+        (ship.accel !== null || ship.brake !== null) ? 5 : 1)
       ship.velX += f * dx
       ship.velY += f * dy
     }
@@ -117,7 +158,7 @@ const gravityShip = (ship, planets) => {
 }
 
 const getRubberbandRadius = (playerCount) => {
-  return 70 * Math.sqrt(Math.max(playerCount, 1))
+  return 75 * Math.pow(Math.max(playerCount, 1), 0.75)
 }
 
 const rubberband = (ship, radius) => {
@@ -129,16 +170,20 @@ const rubberband = (ship, radius) => {
     if (distCenter > maxRadius) {
       ship.velX = ship.velY = 0
     }
-    ship.velX += baseX * 0.25 * MAX_SHIP_VELOCITY *
-      ((distCenter - radius) / (maxRadius - radius)) ** 4
-    ship.velY += baseY * 0.25 * MAX_SHIP_VELOCITY *
-      ((distCenter - radius) / (maxRadius - radius)) ** 4
+    ship.velX += baseX * 0.3 * MAX_SHIP_VELOCITY *
+      (1.1 * (distCenter - radius) / (maxRadius - radius)) ** 8
+    ship.velY += baseY * 0.3 * MAX_SHIP_VELOCITY *
+      (1.1 * (distCenter - radius) / (maxRadius - radius)) ** 8
     checkMaxVelocity(ship)
   }
 }
 
+const healthToVelocity = (health) => {
+  return 0.6 + 0.4 * Math.pow(health, 1.5)
+}
+
 module.exports = {
-  TICKS_PER_SECOND, 
+  TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
   BULLET_VELOCITY,
   LATCH_VELOCITY,
@@ -148,8 +193,13 @@ module.exports = {
   accel,
   inertia,
   brake,
+  recoil,
   gravityBullet,
   gravityShip,
   rubberband,
   getPlanets,
-  getRubberbandRadius }
+  getPlanetSeed,
+  setPlanetSeed,
+  newPlanetSeed,
+  getRubberbandRadius,
+  healthToVelocity }

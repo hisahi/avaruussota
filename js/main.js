@@ -10,12 +10,13 @@ const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
 const TICK_MS = 1000 / tps
 const PLANET_SPIN_SPEED = 0.02
+const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0 }
 
 let lcg = new LCG(0)
 let inGame = false
 let ws = null
 let token = null
-let self = null
+let self = BASE_SELF
 let firing = false
 let accel = false
 let accelStart = 0
@@ -36,8 +37,10 @@ let leaderboard = []
 let rubber = 150
 let no_data = 0
 let pinger = null
-let no_frames = 0
-let no_frames_ignore = false
+let planetSeed = 0
+let dialogOpacity = 0
+let damageAlpha = 0
+let damageGot = 0
 
 let last_partial = null
 let send_turn = false
@@ -45,17 +48,8 @@ let send_turn = false
 document.getElementById('scoreanimation').style.animation = 'none'
 document.getElementById('scoreanimation').style.opacity = '0'
 
-window.addEventListener('blur', function() {
-  no_frames_ignore = true
-}, false)
-
-window.addEventListener('focus', function() {
-  no_frames_ignore = false
-  no_frames = 0
-}, false)
-
 const isMobile = () => {
-  return window.innerWidth < 800
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
 }
 
 const checkSize = () => {
@@ -70,6 +64,8 @@ document.addEventListener('resize', () => checkSize())
 checkSize()
 
 const showDialog = () => {
+  dialogOpacity = 0
+  document.getElementById('dialogbox').style.opacity = '0'
   document.getElementById('dialog').style.display = 'block'
   document.getElementById('stats').style.display = 'none'
   document.getElementById('finalscore').style.display = 'block'
@@ -95,8 +91,13 @@ const hideLose = () => {
 
 const joinGame = () => {
   if (!inGame) {
+    document.getElementById('scoreanimation').style.animation = 'none'
+    document.getElementById('scoreanimation').style.opacity = '0'
     document.getElementById('onlinestatus').textContent = 'connecting'
     hideDialog()
+
+    lines = []
+
     let wsproto = here.protocol.replace('http', 'ws')
     let port = here.port
     if (port) {
@@ -112,10 +113,6 @@ const joinGame = () => {
       args = args.join(' ')
 
       if (cmd === 'your_token') {
-        if (token == null) {
-          window.requestAnimationFrame(frame)
-          no_frames = 0
-        }
         document.getElementById('onlinestatus').textContent = 'in game'
         token = args
         let nick = document.getElementById('nick').value.trim()
@@ -129,9 +126,10 @@ const joinGame = () => {
       } else if (cmd === 'data') {
         no_data = 0
         let obj = null;
-        [obj, ships, bullets, playerCount, rubber] = JSON.parse(args)
-        if (self === null) {
+        [obj, ships, bullets, playerCount, rubber, planetSeed] = JSON.parse(args)
+        if (self.dead) {
           self = obj
+          self.dead = false
         } else {
           if (Math.abs(obj.posX - self.posX) > 0.3) {
             self.posX = (self.posX + obj.posX) / 2
@@ -156,19 +154,32 @@ const joinGame = () => {
           } else if (brake && obj.brake === null) {
             send_turn = true
           }
-          self.name = obj.name
           document.getElementById('yourscore').textContent 
             = document.getElementById('scoreanimation').textContent 
             = document.getElementById('finalscorenum').textContent 
             = obj.score
           if (obj.score > self.score) {
-            document.getElementById('scoreanimation').style.opacity = '100%'
+            document.getElementById('scoreanimation').style.opacity = '1'
             document.getElementById('scoreanimation').style.animation = 'none'
             document.getElementById('scoreanimation').style.animation = ''
           }
+          self.name = obj.name
           self.score = obj.score
+          self.dead = obj.dead
+          if (obj.health < self.health) {
+            damageAlpha = 0.8 * (self.health - obj.health)
+            damageGot = performance.now() + (self.health - obj.health) * 2
+          }
+          self.health = obj.health
+          self.latched = obj.latched
         }
+        if (physics.getPlanetSeed() != planetSeed) {
+          physics.setPlanetSeed(planetSeed)
+          planets = physics.getPlanets(self.posX, self.posY)
+        }
+        physics.setPlanetSeed(planetSeed)
         document.getElementById('playerCountNum').textContent = playerCount
+        document.getElementById('healthbarhealth').style.width = `${0 | (self.health * 200)}px`
       } else if (cmd === 'leaderboard') {
         leaderboard = JSON.parse(args)
         drawLeaderboard()
@@ -177,18 +188,21 @@ const joinGame = () => {
       } else if (cmd === 'unrecognized') {
         leaveGame()
       } else if (cmd === 'defeated') {
+        explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeat').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
         document.getElementById('defeatname').innerHTML = args
       } else if (cmd === 'defeated_collision') {
+        explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeatcrash').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
         document.getElementById('defeatname').innerHTML = args
       } else if (cmd === 'defeated_planet') {
+        explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeatplanet').style.display = 'inline'
@@ -209,7 +223,6 @@ const joinGame = () => {
     
     ws.addEventListener('open', () => {
       dead = false
-      no_pong = 0
       document.getElementById('onlinestatus').textContent = 'waiting for spawn'
       ws.send('join')
       checkSize()
@@ -243,16 +256,10 @@ const leaveGame = () => {
     ws.close()
   }
   token = null
-  dead = true
-  self = null
+  dead = self.dead = true
   ws = null
-  inGame = false
-  accel = false
-  brake = false
-  turn_left = false
-  turn_right = false
-  firing = false
-  no_frames = 0
+  inGame = accel = brake = turn_left = turn_right = firing = false
+  damageGot = damageAlpha = 0
   document.getElementById('onlinestatus').textContent = 'offline'
   showDialog()
   checkSize()
@@ -290,14 +297,9 @@ const drawLeaderboard = () => {
 
 const serverTick = () => {
   if (!ws || !self) {
+    self.velX *= 0.95
+    self.velY *= 0.95
     return
-  }
-
-  if (!dead && !no_frames_ignore) {
-    if (++no_frames >= 25) {
-      window.requestAnimationFrame(frame)
-      no_frames = 0
-    }
   }
 
   if (send_turn) {
@@ -311,10 +313,15 @@ const serverTick = () => {
   if (brake) {
     physics.brake(self)
   }
+  if (firing && (chron.timeMs() - self.lastFired) >= physics.DELAY_BETWEEN_BULLETS_MS) {
+    physics.recoil(self)
+  }
   physics.inertia(self)
-  physics.rubberband(self, rubber)
-  planets = physics.getPlanets(self.posX, self.posY)
-  physics.gravityShip(self, planets)
+  if (!self.latched) {
+    physics.rubberband(self, rubber)
+    planets = physics.getPlanets(self.posX, self.posY)
+    physics.gravityShip(self, planets)
+  }
 
   for (const bullet of bullets) {
     physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
@@ -325,17 +332,19 @@ setInterval(serverTick, TICK_MS)
 const partialTick = (delta) => {
   tpf = 1.0 * delta / TICK_MS
 
-  // turning
-  if (turn_left && !turn_right) {
-    self.orient -= turn_left_ramp * TURN_UNIT * tpf
-    turn_left_ramp = Math.min(1, turn_left_ramp + tpf * 0.1)
-    accelStart = chron.timeMs()
-    send_turn = true
-  } else if (turn_right && !turn_left) {
-    self.orient += turn_right_ramp * TURN_UNIT * tpf
-    turn_right_ramp = Math.min(1, turn_right_ramp + tpf * 0.1)
-    accelStart = chron.timeMs()
-    send_turn = true
+  if (!self.latched) {
+    // turning
+    if (turn_left && !turn_right) {
+      self.orient -= turn_left_ramp * TURN_UNIT * tpf
+      turn_left_ramp = Math.min(1, turn_left_ramp + tpf * 0.1)
+      accelStart = chron.timeMs()
+      send_turn = true
+    } else if (turn_right && !turn_left) {
+      self.orient += turn_right_ramp * TURN_UNIT * tpf
+      turn_right_ramp = Math.min(1, turn_right_ramp + tpf * 0.1)
+      accelStart = chron.timeMs()
+      send_turn = true
+    }
   }
   
   // interpolate
@@ -375,7 +384,7 @@ const applyPosition = () => {
   const willAccel = h > 0.8
   let shouldUpdateAccelStart = willAccel != accel
 
-  if (h > 0.01) {
+  if (!self.latched && h > 0.01) {
     const angle = Math.atan2(x, -y)
     shouldUpdateAccelStart |= self.orient != angle
     self.orient = angle 
@@ -389,7 +398,6 @@ const applyPosition = () => {
 }
 
 const resetJoystickCenter = () => {
-  console.log('center')
   jstick.style.top = jbase.offsetTop + (jbase.offsetHeight / 2) - (jstick.offsetHeight / 2) + 'px'
   jstick.style.left = jbase.offsetLeft + (jbase.offsetWidth / 2) - (jstick.offsetWidth / 2) + 'px'
   applyPosition()
@@ -436,9 +444,10 @@ document.getElementById('btnfire').addEventListener('pointerdown', () => {
   send_turn = true
 })
 document.getElementById('btnfire').addEventListener('pointerover', (e) => {
-  if (e.pressure <= 0) return;
-  firing = true
-  send_turn = true
+  if (e.pressure > 0) {
+    firing = true
+    send_turn = true
+  }
 })
 
 document.getElementById('btnfire').addEventListener('pointerout', () => {
@@ -455,9 +464,10 @@ document.getElementById('btnbrake').addEventListener('pointerdown', () => {
   send_turn = true
 })
 document.getElementById('btnbrake').addEventListener('pointerover', (e) => {
-  if (e.pressure <= 0) return;
-  brake = true
-  send_turn = true
+  if (e.pressure > 0) {
+    brake = true
+    send_turn = true
+  }
 })
 
 document.getElementById('btnbrake').addEventListener('pointerout', () => {
@@ -707,21 +717,21 @@ const explosion = (ship) => {
 }
 
 const frame = (time) => {
-  no_frames = 0
   ctx.canvas.width = window.innerWidth
   ctx.canvas.height = window.innerHeight
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
-  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * (1 
+  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3/4 : 1/2) 
     / physics.MAX_BULLET_DISTANCE)
 
-  if (!token || !self) {
-    return
-  }
-
+  let delta = 0
   if (last_partial != null) {
-    const delta = time - last_partial
+    delta = time - last_partial
     partialTick(delta)
+    if (dialogOpacity < 1) {
+      dialogOpacity = Math.min(1, dialogOpacity + delta / 250)
+      document.getElementById('dialogbox').style.opacity = dialogOpacity
+    }
   }
   last_partial = time
 
@@ -753,35 +763,37 @@ const frame = (time) => {
     ctx.stroke()
   }
 
-  // draw red mask
-  const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
-    cy + self.posY * unitSize,
-    (rubber - 1) * unitSize,
-    cx + self.posX * unitSize,
-    cy + self.posY * unitSize,
-    (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize)
-  gradient.addColorStop(0, 'rgba(255,0,0,0)')
-  gradient.addColorStop(1, 'rgba(255,0,0,0.25)')
-  ctx.beginPath()
-  ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, 
-    rubber * unitSize, 0, 2 * Math.PI)
-  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
-  ctx.fillStyle = gradient
-  ctx.fill()
+  if (!self.dead) {
+    // draw red mask
+    const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
+      cy + self.posY * unitSize,
+      (rubber - 1) * unitSize,
+      cx + self.posX * unitSize,
+      cy + self.posY * unitSize,
+      (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize)
+    gradient.addColorStop(0, 'rgba(192,192,192,0)')
+    gradient.addColorStop(1, 'rgba(192,192,192,0.25)')
+    ctx.beginPath()
+    ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, 
+      rubber * unitSize, 0, 2 * Math.PI)
+    ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
+    ctx.fillStyle = gradient
+    ctx.fill()
 
-  // draw player ship
-  ctx.lineWidth = 1.5
-  drawShip(self, unitSize)
+    // draw player ship
+    ctx.lineWidth = 1.5
+    drawShip(self, unitSize)
 
-  // draw ships
-  ctx.lineWidth = 1
-  for (const ship of ships) {
-    drawShip(ship, unitSize)
-  }
+    // draw ships
+    ctx.lineWidth = 1
+    for (const ship of ships) {
+      drawShip(ship, unitSize)
+    }
 
-  // draw bullets
-  for (const bullet of bullets) {
-    drawBullet(bullet, unitSize)
+    // draw bullets
+    for (const bullet of bullets) {
+      drawBullet(bullet, unitSize)
+    }
   }
 
   // draw planets
@@ -803,28 +815,60 @@ const frame = (time) => {
   }
   lines = lines.filter(line => line.alpha > 0)
 
+  if (!self.dead) {
   // draw black mask
-  const bgradient = ctx.createRadialGradient(cx, cy,
-    (physics.MAX_BULLET_DISTANCE - 1) * unitSize,
-    cx, cy,
-    (physics.MAX_BULLET_DISTANCE + 10) * unitSize)
-  bgradient.addColorStop(0, 'rgba(0,0,0,0)')
-  bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)')
-  bgradient.addColorStop(1, 'rgba(0,0,0,0.9)')
-  ctx.beginPath()
-  ctx.arc(cx, cy, 
-    (physics.MAX_BULLET_DISTANCE - 1) * unitSize, 0, 2 * Math.PI)
-  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
-  ctx.fillStyle = bgradient
-  ctx.fill()
+    const bgradient = ctx.createRadialGradient(cx, cy,
+      (physics.MAX_BULLET_DISTANCE - 1) * unitSize,
+      cx, cy,
+      (physics.MAX_BULLET_DISTANCE + 10) * unitSize)
+    bgradient.addColorStop(0, 'rgba(0,0,0,0)')
+    bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)')
+    bgradient.addColorStop(1, 'rgba(0,0,0,0.9)')
+    ctx.beginPath()
+    ctx.arc(cx, cy, 
+      (physics.MAX_BULLET_DISTANCE - 1) * unitSize, 0, 2 * Math.PI)
+    ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
+    ctx.fillStyle = bgradient
+    ctx.fill()
+
+    if (damageAlpha > 0) {
+      ctx.fillStyle = `rgba(128,0,0,${damageAlpha})`
+      ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height)
+      ctx.fill()
+      if (time > damageGot && damageAlpha > 0) {
+        damageAlpha = Math.max(0, damageAlpha - delta / 800)
+      }
+    }
+  }
+
+  if (self.health < 0.3) {
+    document.getElementById('yourscore').style.color = (time % 1000) >= 500 ? '#f00' : '#fff'
+    document.getElementById('healthbarhealth').style.background = ((time + 250) % 1000) >= 500 ? '#800' : '#c00'
+  } else if (self.health < 0.7) {
+    document.getElementById('yourscore').style.color = '#fff'
+    const t = (self.health - 0.3) / 0.4 * 204
+    document.getElementById('healthbarhealth').style.background = `rgba(204,${t},${t})`
+  } else {
+    document.getElementById('yourscore').style.color = '#fff'
+    document.getElementById('healthbarhealth').style.background = '#ccc'
+  }
 
   planetAngle += PLANET_SPIN_SPEED
   planetAngle %= 2 * Math.PI
-
+  
   window.requestAnimationFrame(frame)
 }
 
 document.getElementById('btnplay').addEventListener('click', () => joinGame())
+document.getElementById('btnfs').addEventListener('click', () => {
+  if (document.fullscreenElement) {
+    document.exitFullscreen()
+  } else {
+    document.documentElement.requestFullscreen()
+  }
+})
+
+window.requestAnimationFrame(frame)
 
 leaveGame()
 showDialog()

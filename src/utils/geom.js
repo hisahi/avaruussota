@@ -15,7 +15,7 @@ const pointInTriangle = (p1, p2, p3, p) => {
 }
 
 const handleZeroEpsilon = (x) => {
-  return Math.abs(x) < EPSILON ? 0 : x;
+  return Math.abs(x) < EPSILON ? 0 : x
 }
 
 const pointOrientation = (p, q, r) => {
@@ -78,9 +78,9 @@ const getShipPoints = (ship) => {
   const c = Math.cos(ship.orient)
 
   return [
-    rotatePoint(s, c,  0   , +1   ),
-    rotatePoint(s, c, +1   , +1.5 ),
     rotatePoint(s, c,  0   , -1   ),
+    rotatePoint(s, c, +1   , +1.5 ),
+    rotatePoint(s, c,  0   , +1   ),
     rotatePoint(s, c, -1   , +1.5 )
   ]
 }
