@@ -1,14 +1,16 @@
+const GRAV = 6.67e-11
 const TICKS_PER_SECOND = 24
-const MAX_SHIP_VELOCITY = 32 / TICKS_PER_SECOND
+const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND
 const MIN_SHIP_VELOCITY = 0.01
 const LATCH_VELOCITY = 0.15
-const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 2
-const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 2.5))
-const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
-const MAX_BULLET_DISTANCE = 56
+const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.5
+const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
+const INERTIA_MUL = 1
+  // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
+const MAX_BULLET_DISTANCE = 64
 const DELAY_BETWEEN_BULLETS_MS = 250
 const RUBBERBAND_BUFFER = 80
-const PLANET_SEED = 1340985549
+const PLANET_SEED = 1340985553
 const LCG = require('./utils/lcg')
 const PLANET_CHUNK_SIZE = MAX_BULLET_DISTANCE * 2 + 1
 
@@ -88,10 +90,10 @@ const gravityBullet = (bullet, planets) => {
     if (d > (planet.radius + 1.2) && d < planet.radius * 2.5) {
       const dx = planet.x - bullet.posX
       const dy = planet.y - bullet.posY
-      const d2 = Math.hypot(dx, dy)
-      const m = (BULLET_VELOCITY * (planet.radius ** 1.25)) / (d2 * d2)
-      bullet.velX += (m / d2) * dx
-      bullet.velY += (m / d2) * dy
+      const r2 = Math.hypot(dx, dy) ** 2
+      const f = GRAV * 1e+11 / r2
+      bullet.velX += f * dx
+      bullet.velY += f * dy
     }
   }
   const d = Math.hypot(bullet.velX, bullet.velY)
@@ -102,20 +104,20 @@ const gravityBullet = (bullet, planets) => {
 const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y)
-    if (d > (planet.radius + 1.2) && d < planet.radius * 2.5) {
+    if (d > (planet.radius + 1.5) && d < planet.radius * 2.5) {
       const dx = planet.x - ship.posX
       const dy = planet.y - ship.posY
-      const d2 = Math.hypot(dx, dy)
-      const m = (MAX_SHIP_VELOCITY / 24 * (planet.radius ** 1.5)) / (d2 * d2)
-      ship.velX += (m / d2) * dx
-      ship.velY += (m / d2) * dy
+      const r2 = Math.hypot(dx, dy) ** 2
+      const f = GRAV * 1e+10 / r2 / (ship.accel !== null ? 5 : 1)
+      ship.velX += f * dx
+      ship.velY += f * dy
     }
   }
   checkMaxVelocity(ship)
 }
 
 const getRubberbandRadius = (playerCount) => {
-  return 100 * Math.pow(Math.max(playerCount, 1), 0.4)
+  return 70 * Math.sqrt(Math.max(playerCount, 1))
 }
 
 const rubberband = (ship, radius) => {

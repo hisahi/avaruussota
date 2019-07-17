@@ -8,7 +8,9 @@ const noop = (_) => _
 
 const onMessage = (ws, game, handle, shipId) => {
   return (msg) => {
-    if (msg.includes(' ') && shipId !== null) {
+    if (msg.startsWith('ping')) {
+      ws.send(msg.replace('ping', 'pong'))
+    } else if (msg.includes(' ') && shipId !== null) {
       let [token, command, ...args] = msg.split(' ')
       args = args.join(' ')
       const tokenId = jwt.verify(token, JWT_SECRET)
@@ -34,8 +36,8 @@ const onMessage = (ws, game, handle, shipId) => {
       const token = jwt.sign(ship._id, JWT_SECRET)
       game.setLastSocket(ship, ws)
       shipId = ship._id
-      ws.send('your_token ' + token)
-      ws.send('you ' + JSON.stringify(ship))
+      ws.send(`your_token ${token}`)
+      ws.send(`data ${JSON.stringify([ship, [], [], 1, 75])}`)
       game.welcome(ship, ws)
     }
   }

@@ -10,11 +10,13 @@ const newShip = () => ({
   posX: 0, posY: 0,           // position X, Y
   velX: 0, velY: 0,           // velocity X, Y
   orient: 0,                  // radians, clockwise from 0 = up
+  health: 1,                  // 0 = no health, 1 = max health
 
   name: '',
   score: 0,
   accel: null,
   brake: null,
+  firing: false,
   lastFired: 0,
 
   dead: false,
@@ -62,9 +64,9 @@ const gameFactory = (wss) => {
 
   const newPlayer = () => {
     const ship = newShip()
+    rubberbandRadiusGoal = physics.getRubberbandRadius(Object.keys(ships).length)
     spawn(ship)
     ships[ship._id] = ship
-    rubberbandRadiusGoal = physics.getRubberbandRadius(Object.keys(ships).length)
     return ship
   }
   
@@ -77,11 +79,16 @@ const gameFactory = (wss) => {
     return 2 * ((2 * Math.random()) | 0) - 1
   }
 
-  const isValidSpawn = (ship) => {
+  const isValidSpawn = (ship, allowCloseSpawn) => {
     const d = Math.hypot(ship.posX, ship.posY)
     const min = physics.MAX_BULLET_DISTANCE * 3 / 2
-    if (d > Math.min(rubberbandRadius, rubberbandRadiusGoal)) {
+    const radius = Math.min(rubberbandRadius, rubberbandRadiusGoal) - 10
+    if (d > radius) {
       return false
+    }
+
+    if (allowCloseSpawn) {
+      return true
     }
 
     for (const otherId of Object.keys(ships)) {
@@ -97,15 +104,19 @@ const gameFactory = (wss) => {
   const spawn = (ship) => {
     let baseX = 0
     let baseY = 0
-    let tries = 32
+    const max_tries = 60
+    let tries = max_tries
     while (tries > 0) {
       if (ships.length) {
         const randShip = ships[(ships.length * Math.random()) | 0]
         baseX = randShip.posX
         baseY = randShip.posY
+        baseX += physics.MAX_BULLET_DISTANCE * randomSign() * (Math.random() + 0.75)
+        baseY += physics.MAX_BULLET_DISTANCE * randomSign() * (Math.random() + 0.75)
+      } else {
+        baseX = rubberbandRadius * randomSign() * Math.random() * 0.5
+        baseY = rubberbandRadius * randomSign() * Math.random() * 0.5
       }
-      baseX += physics.MAX_BULLET_DISTANCE * randomSign()
-      baseY += physics.MAX_BULLET_DISTANCE * randomSign()
       const planets = physics.getPlanets(baseX, baseY)
       if (planets.length) {
         const planet = planets[(planets.length * Math.random()) | 0]
@@ -116,7 +127,7 @@ const gameFactory = (wss) => {
         ship.orient = 0
       }
       --tries
-      if (isValidSpawn(ship)) {
+      if (isValidSpawn(ship, tries < 10)) {
         break
       }
     }
@@ -130,7 +141,7 @@ const gameFactory = (wss) => {
         players.push([ship.name, ship.score])
       }
     }
-    players.sort((a, b) => a[1] - b[1])
+    players.sort((a, b) => b[1] - a[1])
     leaderboard = players.slice(0, 10)
     announce(`leaderboard ${JSON.stringify(leaderboard)}`)
   }
@@ -154,35 +165,6 @@ const gameFactory = (wss) => {
     }
   }
 
-  const checkBulletCollision = (shipIds, bullet) => {
-    const planets = physics.getPlanets(bullet.posX, bullet.posY)
-    for (const shipId of shipIds) {
-      const ship = ships[shipId]
-      // 1 unit = ship length from "head" to "tail"
-      if (ship && !ship.dead && bullet.shooter !== ship._id &&
-          Math.abs(ship.posX - bullet.posX) < 4 &&
-          Math.abs(ship.posY - bullet.posY) < 4) {
-        const [p1, p2, p3] = geom.getCollisionPoints(ship)
-        const d1 = Math.hypot(p1[0] - bullet.posX, p1[1] - bullet.posY)
-        const d2 = Math.hypot(p2[0] - bullet.posX, p2[1] - bullet.posY)
-        const d3 = Math.hypot(p3[0] - bullet.posX, p3[1] - bullet.posY)
-
-        // triangle checks
-        if (d1 < 1.2 || d2 < 0.6 || d3 < 0.6) {
-          handleShipBulletCollision(ship, bullet)
-          break // one collision per bullet at most
-        }
-      }
-    }
-    for (const planet of planets) {
-      if (Math.hypot(planet.x - bullet.posX, planet.y - bullet.posY) < 
-        planet.radius) {
-        killBullet(bullet)
-        return
-      }
-    }
-  }
-
   const moveBullets = (mul) => {
     const shipIds = Object.keys(ships)
     for (const id of Object.keys(bullets)) {
@@ -195,27 +177,36 @@ const gameFactory = (wss) => {
 
       physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
 
-      bullet.posX += mul / 4 * bullet.velX
-      bullet.posY += mul / 4 * bullet.velY
+      const newX = bullet.posX + mul * bullet.velX
+      const newY = bullet.posY + mul * bullet.velY
 
-      checkBulletCollision(shipIds, bullet)
+      for (const shipId of shipIds) {
+        const ship = ships[shipId]
+        // 1 unit = ship length from "head" to "tail"
+        if (ship && !ship.dead && bullet.shooter !== ship._id &&
+            Math.abs(ship.posX - bullet.posX) < physics.BULLET_VELOCITY &&
+            Math.abs(ship.posY - bullet.posY) < physics.BULLET_VELOCITY) {
+          const [p1, p2, p3] = geom.getCollisionPoints(ship)
+          if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY],
+            [newX, newY], p1, p2, p3)) {
+            handleShipBulletCollision(ship, bullet)
+            break // one collision per bullet at most
+          }
+        }
+      }
+      
+      const planets = physics.getPlanets(newX, newY)
+      for (const planet of planets) {
+        if (Math.hypot(planet.x - newX, planet.y - newY) < planet.radius) {
+          killBullet(bullet)
+          return
+        }
+      }
 
-      bullet.posX += mul / 4 * bullet.velX
-      bullet.posY += mul / 4 * bullet.velY
-
-      checkBulletCollision(shipIds, bullet)
-
-      bullet.posX += mul / 4 * bullet.velX
-      bullet.posY += mul / 4 * bullet.velY
-
-      checkBulletCollision(shipIds, bullet)
-
-      bullet.posX += mul / 2 * bullet.velX
-      bullet.posY += mul / 2 * bullet.velY
+      bullet.posX = newX
+      bullet.posY = newY
       bullet.dist += mul * physics.BULLET_VELOCITY
       bullets[id] = bullet
-
-      checkBulletCollision(shipIds, bullet)
     }
   }
 
@@ -336,19 +327,20 @@ const gameFactory = (wss) => {
 
   const handleShipPlanetCollision = (ship, planet) => {
     const v = Math.hypot(ship.velX, ship.velY)
-    if (v > (physics.MAX_SHIP_VELOCITY / 3)) {
+    const playerAngle = Math.atan2(ship.velX, ship.velY)
+    const planetAngle = Math.atan2(planet.x - ship.posX,
+      planet.y - ship.posY)
+    const diffAngle = playerAngle - planetAngle + Math.PI
+    const col_vel = (physics.MAX_SHIP_VELOCITY / 4) * geom.getPlanetAngleMultiplier(ship.orient, playerAngle)
+    if (v > col_vel) {
       lastSocket[ship._id].send('defeated_planet')
       killShip(ship)
     } else if (!ship.accel && v > 0 && v < physics.LATCH_VELOCITY) {
       latchPlanet(ship, planet)
     } else {
       // slow collision
-      const playerAngle = Math.atan2(ship.velX, ship.velY)
-      const planetAngle = Math.atan2(planet.x - ship.posX,
-        planet.y - ship.posY)
-      const diffAngle = playerAngle - planetAngle + Math.PI
-      ship.velX = v * Math.sin(diffAngle) * 0.9
-      ship.velY = v * Math.cos(diffAngle) * 0.9
+      ship.velX = v * Math.sin(diffAngle) * 0.95
+      ship.velY = v * Math.cos(diffAngle) * 0.95
       ships[ship._id] = ship
       ship.posX += (v / 8) * (ship.posX - planet.x)
       ship.posY += (v / 8) * (ship.posY - planet.y)
@@ -381,6 +373,10 @@ const gameFactory = (wss) => {
     ships[ship._id] = ship
     
     physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY))
+
+    if (ship.firing) {
+      handleFire(ship)
+    }
   }
 
   const shipAcceleration = () => {
@@ -418,10 +414,8 @@ const gameFactory = (wss) => {
 
       const ws = lastSocket[self._id]
       if (ws) {
-        ws.send(`you ${JSON.stringify(self)}`)
-        ws.send(`nearby ${JSON.stringify([nearbyShips, nearbyBullets])}`)
-        ws.send(`players ${JSON.stringify([Object.keys(ships).length, 
-          rubberbandRadius])}`)
+        ws.send(`data ${JSON.stringify([self, nearbyShips, nearbyBullets, 
+          Object.keys(ships).length, rubberbandRadius])}`)
       }
     }
   }
@@ -493,13 +487,13 @@ const gameFactory = (wss) => {
 
     const now = chron.timeMs()
     if ((now - ship.lastFired) >= physics.DELAY_BETWEEN_BULLETS_MS) {
-      const [p1, , , ] = geom.getShipPoints(ship)
+      const [p1, , , ] = geom.getRealShipPoints(ship)
 
       let bullet = newBullet()
       bullet = {
         ...bullet,
-        posX: p1[0] + ship.posX,
-        posY: p1[1] + ship.posY,
+        posX: p1[0],
+        posY: p1[1],
         velX: physics.BULLET_VELOCITY * Math.sin(-ship.orient),
         velY: physics.BULLET_VELOCITY * Math.cos(-ship.orient),
         dist: 0,
@@ -512,7 +506,7 @@ const gameFactory = (wss) => {
     }
   }
 
-  const handleControl = (ship, angle, accel, brake) => {
+  const handleControl = (ship, angle, accel, brake, firing) => {
     if (!ship || ship.dead !== false) {
       return
     }
@@ -536,6 +530,8 @@ const gameFactory = (wss) => {
     } else if (!brake && ship.brake !== null) {
       ship.brake = null
     }
+
+    ship.firing = firing
 
     ships[ship._id] = ship
   }
@@ -565,7 +561,6 @@ const gameFactory = (wss) => {
     setLastSocket,
     disconnectSocket,
     handleControl,
-    handleFire,
     handleNick
   }
 }

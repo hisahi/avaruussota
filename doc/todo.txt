@@ -1,0 +1,3 @@
+todo:
+- health: can take 1.5 shots normally, slowly fills up, "smoke" when damaged, slower ship if damaged
+- random asteroids

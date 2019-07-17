@@ -4,16 +4,33 @@
     <meta charset="utf-8" />
     <title>avaruussota</title>
     <link rel="stylesheet" type="text/css" href="main.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0" />
+    <meta name="theme-color" content="#000000">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="msapplication-navbutton-color" content="black">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
   </head>
   <body>
     <canvas id="screen"></canvas>
     <div id="stats">
-      <p id="playerCount"><span id="playerCountNum"></span> online</p>
+      <p id="playerCount"><span id="playerCountNum"></span> playing</p>
       <table id="leaderboard">
         <tbody>
         </tbody>
       </table> 
+      <p id="onlinestatus">offline</p>
       <p id="yourscore"></p>
+      <p id="scoreanimation"></p>
+    </div>
+    <div id="mobilecontrols">
+      <div id="joystickouter">
+        <div id="joystickbase">
+          <div id="joystick"> </div>
+        </div>
+      </div>
+      <div class="ctrlbutton" id="btnbrake"><span>BRAKE</span></div>
+      <div class="ctrlbutton" id="btnfire"><span>FIRE</span></div>
     </div>
     <div id="dialog">
       <div id="dialogbox">
@@ -23,12 +40,15 @@
           <span id="defeatplanet">you crash-landed on a planet</span>
           <span id="disconnected">lost connection to server</span>
         </p>
+        <p id="finalscore">
+          you scored <span id="finalscorenum"></span>
+        </p>
         set name: <input type="text" id="nick" maxlength=20 /><br />
         <br />
         <button type="button" id="btnplay">play</button>
         <br />
         <br />
-        <i>v0.4.3</i>
+        <i>v0.5.0</i>
       </div>
     </div>
     <script src="main.bundle.js"></script>

@@ -132,17 +132,50 @@ let planetAngle = 0;
 let playerCount = 1;
 let leaderboard = [];
 let rubber = 150;
+let no_data = 0;
+let pinger = null;
+let no_frames = 0;
+let no_frames_ignore = false;
 let last_partial = null;
 let send_turn = false;
+document.getElementById('scoreanimation').style.animation = 'none';
+document.getElementById('scoreanimation').style.opacity = '0';
+window.addEventListener('blur', function () {
+  no_frames_ignore = true;
+}, false);
+window.addEventListener('focus', function () {
+  no_frames_ignore = false;
+  no_frames = 0;
+}, false);
+
+const isMobile = () => {
+  return window.innerWidth < 800;
+};
+
+const checkSize = () => {
+  if (dead) {
+    document.getElementById('mobilecontrols').style.display = 'none';
+  } else {
+    document.getElementById('mobilecontrols').style.display = isMobile() ? 'block' : 'none';
+  }
+};
+
+document.addEventListener('resize', () => checkSize());
+checkSize();
 
 const showDialog = () => {
   document.getElementById('dialog').style.display = 'block';
   document.getElementById('stats').style.display = 'none';
+  document.getElementById('finalscore').style.display = 'block';
+  document.body.style.position = 'absolute';
+  document.body.style.overflow = '';
 };
 
 const hideDialog = () => {
   document.getElementById('dialog').style.display = 'none';
   document.getElementById('stats').style.display = 'block';
+  document.body.style.position = 'relative';
+  document.body.style.overflow = 'hidden';
 };
 
 const hideLose = () => {
@@ -151,12 +184,12 @@ const hideLose = () => {
   document.getElementById('defeatplanet').style.display = 'none';
   document.getElementById('defeatname').style.display = 'none';
   document.getElementById('disconnected').style.display = 'none';
+  document.getElementById('finalscore').style.display = 'none';
 };
-
-hideLose();
 
 const joinGame = () => {
   if (!inGame) {
+    document.getElementById('onlinestatus').textContent = 'connecting';
     hideDialog();
     let wsproto = here.protocol.replace('http', 'ws');
     let port = here.port;
@@ -175,8 +208,10 @@ const joinGame = () => {
       if (cmd === 'your_token') {
         if (token == null) {
           window.requestAnimationFrame(frame);
+          no_frames = 0;
         }
 
+        document.getElementById('onlinestatus').textContent = 'in game';
         token = args;
         let nick = document.getElementById('nick').value.trim();
 
@@ -185,8 +220,13 @@ const joinGame = () => {
         }
 
         send(`nick ${nick}`);
-      } else if (cmd === 'you') {
-        const obj = JSON.parse(args);
+      } else if (cmd === 'pong') {
+        const now = performance.now();
+        document.getElementById('onlinestatus').textContent = `in game, ping: ${Math.max(now - JSON.parse(args), 0).toFixed(1)}ms`;
+      } else if (cmd === 'data') {
+        no_data = 0;
+        let obj = null;
+        [obj, ships, bullets, playerCount, rubber] = JSON.parse(args);
 
         if (self === null) {
           self = obj;
@@ -220,10 +260,17 @@ const joinGame = () => {
           }
 
           self.name = obj.name;
-          document.getElementById('yourscore').textContent = self.score = obj.score;
+          document.getElementById('yourscore').textContent = document.getElementById('scoreanimation').textContent = document.getElementById('finalscorenum').textContent = obj.score;
+
+          if (obj.score > self.score) {
+            document.getElementById('scoreanimation').style.opacity = '100%';
+            document.getElementById('scoreanimation').style.animation = 'none';
+            document.getElementById('scoreanimation').style.animation = '';
+          }
+
+          self.score = obj.score;
         }
-      } else if (cmd === 'players') {
-        [playerCount, rubber] = JSON.parse(args);
+
         document.getElementById('playerCountNum').textContent = playerCount;
       } else if (cmd === 'leaderboard') {
         leaderboard = JSON.parse(args);
@@ -232,8 +279,6 @@ const joinGame = () => {
         self.orient = parseFloat(args);
       } else if (cmd === 'unrecognized') {
         leaveGame();
-      } else if (cmd === 'nearby') {
-        [ships, bullets] = JSON.parse(args);
       } else if (cmd === 'defeated') {
         hideLose();
         leaveGame();
@@ -262,11 +307,25 @@ const joinGame = () => {
         ships = ships.filter(ship => ship._id !== args);
       } else if (cmd === 'remove_bullet') {
         bullets = bullets.filter(bullet => bullet._id !== args);
+      } else {
+        console.log('unknown cmd', cmd);
       }
     });
     ws.addEventListener('open', () => {
       dead = false;
+      no_pong = 0;
+      document.getElementById('onlinestatus').textContent = 'waiting for spawn';
       ws.send('join');
+      checkSize();
+      pinger = setInterval(() => {
+        if (++no_data > 8) {
+          hideLose();
+          document.getElementById('disconnected').style.display = 'inline';
+          leaveGame();
+        }
+
+        ws.send('ping ' + performance.now());
+      }, 1000);
     });
     ws.addEventListener('close', () => {
       if (!dead) {
@@ -281,21 +340,29 @@ const joinGame = () => {
 };
 
 const leaveGame = () => {
+  if (pinger !== null) {
+    clearInterval(pinger);
+    pinger = null;
+  }
+
   if (ws !== null) {
     ws.close();
   }
 
+  token = null;
   dead = true;
   self = null;
   ws = null;
-  token = null;
   inGame = false;
   accel = false;
   brake = false;
   turn_left = false;
   turn_right = false;
   firing = false;
+  no_frames = 0;
+  document.getElementById('onlinestatus').textContent = 'offline';
   showDialog();
+  checkSize();
 };
 
 const send = msg => {
@@ -333,13 +400,16 @@ const serverTick = () => {
     return;
   }
 
-  if (send_turn) {
-    send(`control ${JSON.stringify([self.orient, accel, brake])}`);
-    send_turn = false;
+  if (!dead && !no_frames_ignore) {
+    if (++no_frames >= 25) {
+      window.requestAnimationFrame(frame);
+      no_frames = 0;
+    }
   }
 
-  if (firing) {
-    send('fire');
+  if (send_turn) {
+    send(`control ${JSON.stringify([self.orient, accel, brake, firing])}`);
+    send_turn = false;
   }
 
   if (accel) {
@@ -392,6 +462,111 @@ const partialTick = delta => {
   }
 };
 
+const jouter = document.getElementById('joystickouter');
+const jbase = document.getElementById('joystickbase');
+const jstick = document.getElementById('joystick');
+
+const applyPosition = () => {
+  if (dead || self === null) {
+    return;
+  }
+
+  const hjbw = jbase.offsetWidth / 2;
+  const hjbh = jbase.offsetHeight / 2;
+  let x = (jstick.offsetLeft + jstick.offsetWidth / 2 - (jbase.offsetLeft + hjbw)) / hjbw * Math.sqrt(2);
+  let y = (jstick.offsetTop + jstick.offsetHeight / 2 - (jbase.offsetTop + hjbh)) / hjbh * Math.sqrt(2);
+  if (x > 1) x = 1;
+  if (x < -1) x = -1;
+  if (y > 1) y = 1;
+  if (y < -1) y = -1;
+  const h = Math.hypot(x, y);
+  const willAccel = h > 0.8;
+  let shouldUpdateAccelStart = willAccel != accel;
+
+  if (h > 0.01) {
+    const angle = Math.atan2(x, -y);
+    shouldUpdateAccelStart |= self.orient != angle;
+    self.orient = angle;
+  }
+
+  accel = willAccel;
+
+  if (shouldUpdateAccelStart) {
+    accelStart = chron.timeMs();
+    send_turn = true;
+  }
+};
+
+const resetJoystickCenter = () => {
+  console.log('center');
+  jstick.style.top = jbase.offsetTop + jbase.offsetHeight / 2 - jstick.offsetHeight / 2 + 'px';
+  jstick.style.left = jbase.offsetLeft + jbase.offsetWidth / 2 - jstick.offsetWidth / 2 + 'px';
+  applyPosition();
+};
+
+resetJoystickCenter();
+jbase.addEventListener('pointerdown', e => {
+  jstick.style.left = e.pageX - jstick.offsetWidth / 2 + 'px';
+  jstick.style.top = e.pageY - jstick.offsetHeight / 2 + 'px';
+  applyPosition();
+});
+jbase.addEventListener('pointermove', e => {
+  if (e.pressure > 0) {
+    jstick.style.left = e.pageX - jstick.offsetWidth / 2 + 'px';
+    jstick.style.top = e.pageY - jstick.offsetHeight / 2 + 'px';
+    applyPosition();
+  }
+});
+jbase.addEventListener('pointerout', e => {
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+});
+jstick.addEventListener('pointerout', e => {
+  e.stopPropagation();
+  e.stopImmediatePropagation();
+});
+jouter.addEventListener('pointerout', () => {
+  console.log('out');
+  resetJoystickCenter();
+});
+jouter.addEventListener('pointerup', () => {
+  console.log('up');
+  resetJoystickCenter();
+});
+document.getElementById('btnfire').addEventListener('pointerdown', () => {
+  firing = true;
+  send_turn = true;
+});
+document.getElementById('btnfire').addEventListener('pointerover', e => {
+  if (e.pressure <= 0) return;
+  firing = true;
+  send_turn = true;
+});
+document.getElementById('btnfire').addEventListener('pointerout', () => {
+  firing = false;
+  send_turn = true;
+});
+document.getElementById('btnfire').addEventListener('pointerup', () => {
+  firing = false;
+  send_turn = true;
+});
+document.getElementById('btnbrake').addEventListener('pointerdown', () => {
+  brake = true;
+  send_turn = true;
+});
+document.getElementById('btnbrake').addEventListener('pointerover', e => {
+  if (e.pressure <= 0) return;
+  brake = true;
+  send_turn = true;
+});
+document.getElementById('btnbrake').addEventListener('pointerout', () => {
+  brake = false;
+  send_turn = true;
+});
+document.getElementById('btnbrake').addEventListener('pointerup', () => {
+  brake = false;
+  send_turn = true;
+});
 window.addEventListener('keydown', e => {
   if (!token || dead) {
     return;
@@ -410,6 +585,7 @@ window.addEventListener('keydown', e => {
     turn_right = true;
   } else if (e.code == 'Space') {
     firing = true;
+    send_turn = true;
   }
 }, true);
 window.addEventListener('keyup', e => {
@@ -432,6 +608,7 @@ window.addEventListener('keyup', e => {
     turn_right = false;
   } else if (e.code == 'Space') {
     firing = false;
+    send_turn = true;
   }
 }, true);
 window.addEventListener('blur', () => {
@@ -617,6 +794,7 @@ const explosion = ship => {
 };
 
 const frame = time => {
+  no_frames = 0;
   ctx.canvas.width = window.innerWidth;
   ctx.canvas.height = window.innerHeight;
   const cx = ctx.canvas.width / 2;
@@ -636,16 +814,7 @@ const frame = time => {
   const xm = (self.posX % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
   const ym = (self.posY % GRID_SIZE + GRID_SIZE) % GRID_SIZE;
   ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-  const gradient = ctx.createRadialGradient(cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber - 1) * unitSize, cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize);
-  gradient.addColorStop(0, 'rgba(255,0,0,0)');
-  gradient.addColorStop(1, 'rgba(255,0,0,0.25)'); // draw mask
-
-  ctx.beginPath();
-  ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, rubber * unitSize, 0, 2 * Math.PI);
-  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
-  ctx.fillStyle = gradient;
-  ctx.fill(); // draw grid
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height); // draw grid
 
   ctx.lineWidth = 1;
   ctx.strokeStyle = '#333';
@@ -664,8 +833,17 @@ const frame = time => {
     ctx.moveTo(0, dy);
     ctx.lineTo(ctx.canvas.width, dy);
     ctx.stroke();
-  } // draw player ship
+  } // draw red mask
 
+
+  const gradient = ctx.createRadialGradient(cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber - 1) * unitSize, cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize);
+  gradient.addColorStop(0, 'rgba(255,0,0,0)');
+  gradient.addColorStop(1, 'rgba(255,0,0,0.25)');
+  ctx.beginPath();
+  ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, rubber * unitSize, 0, 2 * Math.PI);
+  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
+  ctx.fillStyle = gradient;
+  ctx.fill(); // draw player ship
 
   ctx.lineWidth = 1.5;
   drawShip(self, unitSize); // draw ships
@@ -698,7 +876,17 @@ const frame = time => {
     line.alpha -= 1;
   }
 
-  lines = lines.filter(line => line.alpha > 0);
+  lines = lines.filter(line => line.alpha > 0); // draw black mask
+
+  const bgradient = ctx.createRadialGradient(cx, cy, (physics.MAX_BULLET_DISTANCE - 1) * unitSize, cx, cy, (physics.MAX_BULLET_DISTANCE + 10) * unitSize);
+  bgradient.addColorStop(0, 'rgba(0,0,0,0)');
+  bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)');
+  bgradient.addColorStop(1, 'rgba(0,0,0,0.9)');
+  ctx.beginPath();
+  ctx.arc(cx, cy, (physics.MAX_BULLET_DISTANCE - 1) * unitSize, 0, 2 * Math.PI);
+  ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
+  ctx.fillStyle = bgradient;
+  ctx.fill();
   planetAngle += PLANET_SPIN_SPEED;
   planetAngle %= 2 * Math.PI;
   window.requestAnimationFrame(frame);
@@ -707,6 +895,7 @@ const frame = time => {
 document.getElementById('btnplay').addEventListener('click', () => joinGame());
 leaveGame();
 showDialog();
+hideLose();
 
 /***/ }),
 
@@ -717,17 +906,19 @@ showDialog();
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
+const GRAV = 6.67e-11;
 const TICKS_PER_SECOND = 24;
-const MAX_SHIP_VELOCITY = 32 / TICKS_PER_SECOND;
+const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND;
 const MIN_SHIP_VELOCITY = 0.01;
 const LATCH_VELOCITY = 0.15;
-const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 2;
-const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 2.5));
-const INERTIA_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90));
-const MAX_BULLET_DISTANCE = 56;
+const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.5;
+const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
+const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
+
+const MAX_BULLET_DISTANCE = 64;
 const DELAY_BETWEEN_BULLETS_MS = 250;
 const RUBBERBAND_BUFFER = 80;
-const PLANET_SEED = 1340985549;
+const PLANET_SEED = 1340985553;
 
 const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
 
@@ -817,10 +1008,10 @@ const gravityBullet = (bullet, planets) => {
     if (d > planet.radius + 1.2 && d < planet.radius * 2.5) {
       const dx = planet.x - bullet.posX;
       const dy = planet.y - bullet.posY;
-      const d2 = Math.hypot(dx, dy);
-      const m = BULLET_VELOCITY * planet.radius ** 1.25 / (d2 * d2);
-      bullet.velX += m / d2 * dx;
-      bullet.velY += m / d2 * dy;
+      const r2 = Math.hypot(dx, dy) ** 2;
+      const f = GRAV * 1e+11 / r2;
+      bullet.velX += f * dx;
+      bullet.velY += f * dy;
     }
   }
 
@@ -833,13 +1024,13 @@ const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
 
-    if (d > planet.radius + 1.2 && d < planet.radius * 2.5) {
+    if (d > planet.radius + 1.5 && d < planet.radius * 2.5) {
       const dx = planet.x - ship.posX;
       const dy = planet.y - ship.posY;
-      const d2 = Math.hypot(dx, dy);
-      const m = MAX_SHIP_VELOCITY / 24 * planet.radius ** 1.5 / (d2 * d2);
-      ship.velX += m / d2 * dx;
-      ship.velY += m / d2 * dy;
+      const r2 = Math.hypot(dx, dy) ** 2;
+      const f = GRAV * 1e+10 / r2 / (ship.accel !== null ? 5 : 1);
+      ship.velX += f * dx;
+      ship.velY += f * dy;
     }
   }
 
@@ -847,7 +1038,7 @@ const gravityShip = (ship, planets) => {
 };
 
 const getRubberbandRadius = playerCount => {
-  return 100 * Math.pow(Math.max(playerCount, 1), 0.4);
+  return 70 * Math.sqrt(Math.max(playerCount, 1));
 };
 
 const rubberband = (ship, radius) => {
@@ -910,6 +1101,8 @@ module.exports = {
 /*! no static exports found */
 /***/ (function(module, exports) {
 
+const EPSILON = 1e-10;
+
 const pointInTriangle = (p1, p2, p3, p) => {
   const [x1, y1] = p1;
   const [x2, y2] = p2;
@@ -921,8 +1114,48 @@ const pointInTriangle = (p1, p2, p3, p) => {
   return c1 > 0 && c2 > 0 && c3 > 0;
 };
 
+const handleZeroEpsilon = x => {
+  return Math.abs(x) < EPSILON ? 0 : x;
+};
+
+const pointOrientation = (p, q, r) => {
+  return Math.sign(handleZeroEpsilon((q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])));
+};
+
+const onCollinearSegment = (p, q, r) => {
+  return q[0] <= Math.max(p[0], r[0]) && q[0] >= Math.min(p[0], r[0]) && q[1] <= Math.max(p[1], r[1]) && q[1] >= Math.min(p[1], r[1]);
+};
+
+const lineIntersectsLine = (a1, a2, b1, b2) => {
+  const o1 = pointOrientation(a1, b1, a2);
+  const o2 = pointOrientation(a1, b1, b2);
+  const o3 = pointOrientation(a2, b2, a1);
+  const o4 = pointOrientation(a2, b2, b1);
+
+  if (o1 !== o2 && o3 !== o4) {
+    return true;
+  }
+
+  return o1 == 0 && onCollinearSegment(a1, a2, b1) || o2 == 0 && onCollinearSegment(a1, b2, b1) || o3 == 0 && onCollinearSegment(a2, a1, b2) || o4 == 0 && onCollinearSegment(a2, b1, b2);
+};
+
+const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
+  return lineIntersectsLine(l1, l2, t1, t2) || lineIntersectsLine(l1, l2, t2, t3) || lineIntersectsLine(l1, l2, t3, t1);
+};
+
 const wrapRadianAngle = angle => {
   return (angle + Math.PI) % (2 * Math.PI) - Math.PI;
+};
+
+const getPlanetAngleMultiplier = (orient, vel) => {
+  let diff = Math.abs((orient - vel + Math.PI) % (2 * Math.PI));
+
+  if (Math.abs(diff) > Math.PI) {
+    diff = 2 * Math.PI - Math.PI;
+  }
+
+  const sc = diff / Math.PI;
+  return 1 + sc;
 };
 
 const rotatePoint = (s, c, x, y) => [x * c - y * s, x * s + y * c];
@@ -955,7 +1188,7 @@ const getCollisionPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, 0, ship.posX, ship.posY), rotatePointOffset(s, c, +0.5, +0.75, ship.posX, ship.posY), rotatePointOffset(s, c, -0.5, +0.75, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0, 0, ship.posX, ship.posY), rotatePointOffset(s, c, +0.83, +1.25, ship.posX, ship.posY), rotatePointOffset(s, c, -0.83, +1.25, ship.posX, ship.posY)];
 };
 
 const getThrusterPoints = ship => {
@@ -970,7 +1203,10 @@ const getThrusterPoints = ship => {
 
 module.exports = {
   pointInTriangle,
+  lineIntersectsLine,
+  lineIntersectsTriangle,
   wrapRadianAngle,
+  getPlanetAngleMultiplier,
   getShipPoints,
   getRealShipPoints,
   getCollisionPoints,

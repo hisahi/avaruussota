@@ -1,3 +1,14 @@
+@keyframes youscored {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(8);
+  }
+}
+
 html, body {
   width: 100%;
   height: 100%;
@@ -30,6 +41,13 @@ canvas {
   font-family: monospace;
   pointer-events: none;
   font-size: 150%;
+  text-align: center;
+  display: block;
+  width: 100%;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
 }
 #playerCount {
   position: fixed;
@@ -40,13 +58,97 @@ canvas {
   color: rgba(255, 255, 255, 0.75);
 }
 #yourscore {
+  padding: 5px;
+  display: table;
+  margin: 0 auto;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 300%;
+  font-weight: bold;
+}
+#scoreanimation {
+  padding: 5px;
+  display: table;
+  margin: 0 auto;
+  text-align: center;
+  background: transparent;
+  color: rgba(96, 255, 96, 0.75);
+  font-size: 300%;
+  font-weight: bold;
+  animation: 0.8s linear 0s 1 youscored forwards;
+}
+#onlinestatus {
   position: fixed;
   bottom: 5px;
   left: 5px;
   padding: 5px;
-  background: rgba(0, 0, 0, 0.25);
-  color: rgba(255, 255, 255, 0.75);
-  font-size: 250%;
+  display: inline-block;
+  text-align: left;
+  color: #fff;
+  opacity: 0.3;
+  font-size: 75%;
+}
+#mobilecontrols {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+}
+#joystickouter {
+  width: 60vmin;
+  height: 60vmin;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  touch-action: none;
+}
+#joystickbase {
+  width: 48vmin;
+  height: 48vmin;
+  border-radius: 48vmin;
+  background: radial-gradient(rgba(48, 48, 48, 0.75) 0%, rgba(48, 48, 48, 0.75) 47.7%, rgba(128, 48, 48, 0.55) 48.3%);
+  color: #fff;
+  position: fixed;
+  bottom: 6vmin;
+  left: 6vmin;
+  border: 2px solid rgba(255, 255, 255, 0.75);
+}
+#joystick {
+  width: 12vmin;
+  height: 12vmin;
+  border-radius: 12vmin;
+  background: rgba(72, 72, 72, 0.75);
+  color: #fff;
+  position: fixed;
+  pointer-events: none;
+}
+.ctrlbutton {
+  font-size: 3vmin;
+  line-height: 25vmin;
+  text-align: center;
+  vertical-align: middle;
+  user-select: none;
+  width: 25vmin;
+  height: 25vmin;
+  border-radius: 25vmin;
+  background: rgba(48, 48, 48, 0.75);
+  color: #fff;
+  font-family: monospace;
+}
+.ctrlbutton span {
+  pointer-events: none;
+}
+#btnfire {
+  position: fixed;
+  bottom: 5vmin;
+  right: 5vmin;
+}
+#btnbrake {
+  position: fixed;
+  bottom: 5vmin;
+  right: 35vmin;
 }
 #leaderboard {
   position: fixed;
@@ -72,4 +174,15 @@ canvas {
 i {
   font-size: 60%;
   color: #888;
+}
+@media only screen and (orientation: portrait) {
+  #btnbrake {
+    bottom: 35vmin;
+    right: 5vmin;
+  }
+}
+@media only screen and (max-width: 800px) {
+  #stats {
+    font-size: 100%;
+  }
 }

@@ -1,22 +1,13 @@
 const geom = require('./utils/geom')
 
-const commands = {
-  'fire': (game, ship) => game.handleFire(ship),
-}
-
 const handlerFactory = (game) => {
   return (ship, cmd, args) => {
     if (cmd == 'control') {
-      let [angle, accel, brake] = JSON.parse(args)
+      let [angle, accel, brake, firing] = JSON.parse(args)
       angle = geom.wrapRadianAngle(angle)
-      return game.handleControl(ship, angle, accel, brake)
+      return game.handleControl(ship, angle, accel, brake, firing)
     } else if (cmd == 'nick') {
       return game.handleNick(ship, args)
-    }
-
-    const func = commands[cmd]
-    if (func) {
-      return func(game, ship)
     }
   }
 }
