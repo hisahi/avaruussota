@@ -10,4 +10,5 @@
 | 9.7.  | 8    | planeetat, nimet, frontend                              |
 | 16.7. | 9    | frontend, rubberbanding, heroku                         |
 | 17.7. | 8    | bug fixes, performance improvements, powerups           |
-| yht   | 58   |                                                         |
+| 18.7. | 3    | frontend work                                           |
+| yht   | 61   |                                                         |

@@ -45,6 +45,17 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
     || (o4 == 0 && onCollinearSegment(a2, b1, b2))
 }
 
+const closestSynchroDistance = (a1, a2, b1, b2) => {
+  const A = a1[0] - b1[0]
+  const B = (a2[0] - a1[0]) - (b2[0] - b1[0])
+  const C = a1[1] - b1[1]
+  const D = (a2[1] - a1[1]) - (b2[1] - b1[1])
+  if (B == 0 && D == 0) {
+    return 0
+  }
+  return -(A * B + C * D) / (B * B + D * D)
+}
+
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
   return lineIntersectsLine(l1, l2, t1, t2)
     || lineIntersectsLine(l1, l2, t2, t3)
@@ -85,18 +96,22 @@ const getShipPoints = (ship) => {
   ]
 }
 
-const getRealShipPoints = (ship) => {
+const getOffsetShipPoints = (ship, x, y) => {
   if (!ship) {
     return []
   }
 
   const points = getShipPoints(ship)
   return [
-    [points[0][0] + ship.posX, points[0][1] + ship.posY],
-    [points[1][0] + ship.posX, points[1][1] + ship.posY],
-    [points[2][0] + ship.posX, points[2][1] + ship.posY],
-    [points[3][0] + ship.posX, points[3][1] + ship.posY]
+    [points[0][0] + x, points[0][1] + y],
+    [points[1][0] + x, points[1][1] + y],
+    [points[2][0] + x, points[2][1] + y],
+    [points[3][0] + x, points[3][1] + y]
   ]
+}
+
+const getRealShipPoints = (ship) => {
+  return getOffsetShipPoints(ship, ship.posX, ship.posY)
 }
 
 const getCollisionPoints = (ship) => {
@@ -134,10 +149,12 @@ const getThrusterPoints = (ship) => {
 module.exports = { 
   pointInTriangle,
   lineIntersectsLine,
+  closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,
   getPlanetAngleMultiplier,
   getShipPoints,
+  getOffsetShipPoints,
   getRealShipPoints,
   getCollisionPoints,
   getThrusterPoints }

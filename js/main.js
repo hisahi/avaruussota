@@ -10,26 +10,30 @@ const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
 const TICK_MS = 1000 / tps
 const PLANET_SPIN_SPEED = 0.02
-const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0 }
+const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0, orient: 0 }
 
 let lcg = new LCG(0)
 let inGame = false
 let ws = null
 let token = null
 let self = BASE_SELF
+
+let dead = false
 let firing = false
 let accel = false
 let accelStart = 0
 let brake = false
 let turn_left = false
 let turn_right = false
-let dead = false
-let ships = []
-let bullets = []
 let turn_left_ramp = 0
 let turn_right_ramp = 0
+
+let ships = []
+let bullets = []
 let lines = []
 let planets = []
+let smokes = []
+let bubbles = []
 let tpf = 1
 let planetAngle = 0
 let playerCount = 1
@@ -41,6 +45,9 @@ let planetSeed = 0
 let dialogOpacity = 0
 let damageAlpha = 0
 let damageGot = 0
+let spawnBubbles = []
+
+let lastSmoke = {}
 
 let last_partial = null
 let send_turn = false
@@ -94,6 +101,7 @@ const joinGame = () => {
     document.getElementById('scoreanimation').style.animation = 'none'
     document.getElementById('scoreanimation').style.opacity = '0'
     document.getElementById('onlinestatus').textContent = 'connecting'
+    document.getElementById('btnplay').blur()
     hideDialog()
 
     lines = []
@@ -125,8 +133,17 @@ const joinGame = () => {
         document.getElementById('onlinestatus').textContent = `in game, ping: ${Math.max(now - JSON.parse(args), 0).toFixed(1)}ms`
       } else if (cmd === 'data') {
         no_data = 0
-        let obj = null;
+        let obj = null
+        let oldHealth = {}
+        for (const ship of ships) {
+          oldHealth[ship._id] = ship.health
+        }
         [obj, ships, bullets, playerCount, rubber, planetSeed] = JSON.parse(args)
+        for (const ship of ships) {
+          if (oldHealth.hasOwnProperty(ship._id) && oldHealth[ship._id] > ship.health) {
+            spawnBubbles.push({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.2 * (1 + oldHealth[ship._id] - ship.health) })
+          }
+        }
         if (self.dead) {
           self = obj
           self.dead = false
@@ -169,6 +186,7 @@ const joinGame = () => {
           if (obj.health < self.health) {
             damageAlpha = 0.8 * (self.health - obj.health)
             damageGot = performance.now() + (self.health - obj.health) * 2
+            spawnBubbles.push({ x: self.posX, y: self.posY, alpha: 100, radius: 0.2 * (1 + self.health - obj.health) })
           }
           self.health = obj.health
           self.latched = obj.latched
@@ -179,7 +197,7 @@ const joinGame = () => {
         }
         physics.setPlanetSeed(planetSeed)
         document.getElementById('playerCountNum').textContent = playerCount
-        document.getElementById('healthbarhealth').style.width = `${0 | (self.health * 200)}px`
+        document.getElementById('healthbarhealth').style.width = `${Math.ceil(self.health * 200)}px`
       } else if (cmd === 'leaderboard') {
         leaderboard = JSON.parse(args)
         drawLeaderboard()
@@ -650,6 +668,34 @@ const drawLine = (line, scale) => {
   ctx.stroke()
 }
 
+const drawSmoke = (smoke, scale) => {
+  const { x, y, radius, alpha } = smoke
+  const cx = ctx.canvas.width / 2
+  const cy = ctx.canvas.height / 2
+
+  const sx = cx + (self.posX - x) * scale
+  const sy = cy + (self.posY - y) * scale
+
+  ctx.fillStyle = `rgba(92,92,92,${alpha * 0.01})` 
+  ctx.beginPath()
+  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI)
+  ctx.fill()
+}
+
+const drawBubble = (bubble, scale) => {
+  const { x, y, radius, alpha } = bubble
+  const cx = ctx.canvas.width / 2
+  const cy = ctx.canvas.height / 2
+
+  const sx = cx + (self.posX - x) * scale
+  const sy = cy + (self.posY - y) * scale
+
+  ctx.strokeStyle = `rgba(128,128,128,${alpha * 0.01})` 
+  ctx.beginPath()
+  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI)
+  ctx.stroke()
+}
+
 const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
   const [x, y] = [(x1 + x2) / 2, (y1 + y2) / 2]
   const angle = Math.atan2(x2 - x1, y2 - y1)
@@ -722,7 +768,7 @@ const frame = (time) => {
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
   const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3/4 : 1/2) 
-    / physics.MAX_BULLET_DISTANCE)
+    / physics.VIEW_DISTANCE)
 
   let delta = 0
   if (last_partial != null) {
@@ -783,11 +829,25 @@ const frame = (time) => {
     // draw player ship
     ctx.lineWidth = 1.5
     drawShip(self, unitSize)
+    if (self.health < 0.75) {
+      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 12)
+      if (!lastSmoke.hasOwnProperty(self._id) || time - lastSmoke[self._id] > interval) {
+        smokes.push({ x: self.posX + Math.random() - 0.5, y: self.posY + Math.random() - 0.5, radius: 0.15 + (0.75 - self.health) + Math.random() * 0.3, alpha: 100 })
+        lastSmoke[self._id] = time
+      }
+    }
 
     // draw ships
     ctx.lineWidth = 1
     for (const ship of ships) {
       drawShip(ship, unitSize)
+      if (ship.health < 0.75) {
+        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 12)
+        if (!lastSmoke.hasOwnProperty(ship._id) || time - lastSmoke[ship._id] > interval) {
+          smokes.push({ x: ship.posX + Math.random() - 0.5, y: ship.posY + Math.random() - 0.5, radius: 0.15 + (0.75 - ship.health) + Math.random() * 0.3, alpha: 100 })
+          lastSmoke[ship._id] = time
+        }
+      }
     }
 
     // draw bullets
@@ -815,18 +875,47 @@ const frame = (time) => {
   }
   lines = lines.filter(line => line.alpha > 0)
 
+  // draw smokes
+  for (const smoke of smokes) {
+    drawSmoke(smoke, unitSize)
+
+    smoke.radius += 0.015
+    smoke.alpha -= 1
+  }
+  smokes = smokes.filter(smoke => smoke.alpha > 0)
+
+  for (const shipid of Object.keys(lastSmoke)) {
+    if (time - lastSmoke[shipid] >= 5000) {
+      delete lastSmoke[shipid]
+    }
+  }
+
+  for (const bubble of spawnBubbles) {
+    bubbles.push(bubble)
+  }
+  spawnBubbles = []
+
+  // draw bubbles
+  for (const bubble of bubbles) {
+    drawBubble(bubble, unitSize)
+
+    bubble.radius += 0.05
+    bubble.alpha -= 1
+  }
+  bubbles = bubbles.filter(bubble => bubble.alpha > 0)
+
   if (!self.dead) {
-  // draw black mask
+    // draw black mask
     const bgradient = ctx.createRadialGradient(cx, cy,
-      (physics.MAX_BULLET_DISTANCE - 1) * unitSize,
+      (physics.VIEW_DISTANCE - 1) * unitSize,
       cx, cy,
-      (physics.MAX_BULLET_DISTANCE + 10) * unitSize)
+      (physics.VIEW_DISTANCE + 10) * unitSize)
     bgradient.addColorStop(0, 'rgba(0,0,0,0)')
     bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)')
     bgradient.addColorStop(1, 'rgba(0,0,0,0.9)')
     ctx.beginPath()
     ctx.arc(cx, cy, 
-      (physics.MAX_BULLET_DISTANCE - 1) * unitSize, 0, 2 * Math.PI)
+      (physics.VIEW_DISTANCE - 1) * unitSize, 0, 2 * Math.PI)
     ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
     ctx.fillStyle = bgradient
     ctx.fill()

@@ -114,26 +114,29 @@ const BASE_SELF = {
   posX: 0,
   posY: 0,
   velX: 0,
-  velY: 0
+  velY: 0,
+  orient: 0
 };
 let lcg = new LCG(0);
 let inGame = false;
 let ws = null;
 let token = null;
 let self = BASE_SELF;
+let dead = false;
 let firing = false;
 let accel = false;
 let accelStart = 0;
 let brake = false;
 let turn_left = false;
 let turn_right = false;
-let dead = false;
-let ships = [];
-let bullets = [];
 let turn_left_ramp = 0;
 let turn_right_ramp = 0;
+let ships = [];
+let bullets = [];
 let lines = [];
 let planets = [];
+let smokes = [];
+let bubbles = [];
 let tpf = 1;
 let planetAngle = 0;
 let playerCount = 1;
@@ -145,6 +148,8 @@ let planetSeed = 0;
 let dialogOpacity = 0;
 let damageAlpha = 0;
 let damageGot = 0;
+let spawnBubbles = [];
+let lastSmoke = {};
 let last_partial = null;
 let send_turn = false;
 document.getElementById('scoreanimation').style.animation = 'none';
@@ -196,6 +201,7 @@ const joinGame = () => {
     document.getElementById('scoreanimation').style.animation = 'none';
     document.getElementById('scoreanimation').style.opacity = '0';
     document.getElementById('onlinestatus').textContent = 'connecting';
+    document.getElementById('btnplay').blur();
     hideDialog();
     lines = [];
     let wsproto = here.protocol.replace('http', 'ws');
@@ -228,7 +234,24 @@ const joinGame = () => {
       } else if (cmd === 'data') {
         no_data = 0;
         let obj = null;
+        let oldHealth = {};
+
+        for (const ship of ships) {
+          oldHealth[ship._id] = ship.health;
+        }
+
         [obj, ships, bullets, playerCount, rubber, planetSeed] = JSON.parse(args);
+
+        for (const ship of ships) {
+          if (oldHealth.hasOwnProperty(ship._id) && oldHealth[ship._id] > ship.health) {
+            spawnBubbles.push({
+              x: ship.posX,
+              y: ship.posY,
+              alpha: 100,
+              radius: 0.2 * (1 + oldHealth[ship._id] - ship.health)
+            });
+          }
+        }
 
         if (self.dead) {
           self = obj;
@@ -277,6 +300,12 @@ const joinGame = () => {
           if (obj.health < self.health) {
             damageAlpha = 0.8 * (self.health - obj.health);
             damageGot = performance.now() + (self.health - obj.health) * 2;
+            spawnBubbles.push({
+              x: self.posX,
+              y: self.posY,
+              alpha: 100,
+              radius: 0.2 * (1 + self.health - obj.health)
+            });
           }
 
           self.health = obj.health;
@@ -290,7 +319,7 @@ const joinGame = () => {
 
         physics.setPlanetSeed(planetSeed);
         document.getElementById('playerCountNum').textContent = playerCount;
-        document.getElementById('healthbarhealth').style.width = `${0 | self.health * 200}px`;
+        document.getElementById('healthbarhealth').style.width = `${Math.ceil(self.health * 200)}px`;
       } else if (cmd === 'leaderboard') {
         leaderboard = JSON.parse(args);
         drawLeaderboard();
@@ -749,6 +778,40 @@ const drawLine = (line, scale) => {
   ctx.stroke();
 };
 
+const drawSmoke = (smoke, scale) => {
+  const {
+    x,
+    y,
+    radius,
+    alpha
+  } = smoke;
+  const cx = ctx.canvas.width / 2;
+  const cy = ctx.canvas.height / 2;
+  const sx = cx + (self.posX - x) * scale;
+  const sy = cy + (self.posY - y) * scale;
+  ctx.fillStyle = `rgba(92,92,92,${alpha * 0.01})`;
+  ctx.beginPath();
+  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI);
+  ctx.fill();
+};
+
+const drawBubble = (bubble, scale) => {
+  const {
+    x,
+    y,
+    radius,
+    alpha
+  } = bubble;
+  const cx = ctx.canvas.width / 2;
+  const cy = ctx.canvas.height / 2;
+  const sx = cx + (self.posX - x) * scale;
+  const sy = cy + (self.posY - y) * scale;
+  ctx.strokeStyle = `rgba(128,128,128,${alpha * 0.01})`;
+  ctx.beginPath();
+  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI);
+  ctx.stroke();
+};
+
 const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
   const [x, y] = [(x1 + x2) / 2, (y1 + y2) / 2];
   const angle = Math.atan2(x2 - x1, y2 - y1);
@@ -819,7 +882,7 @@ const frame = time => {
   ctx.canvas.height = window.innerHeight;
   const cx = ctx.canvas.width / 2;
   const cy = ctx.canvas.height / 2;
-  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3 / 4 : 1 / 2) / physics.MAX_BULLET_DISTANCE);
+  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3 / 4 : 1 / 2) / physics.VIEW_DISTANCE);
   let delta = 0;
 
   if (last_partial != null) {
@@ -869,12 +932,41 @@ const frame = time => {
     ctx.fill(); // draw player ship
 
     ctx.lineWidth = 1.5;
-    drawShip(self, unitSize); // draw ships
+    drawShip(self, unitSize);
+
+    if (self.health < 0.75) {
+      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 12);
+
+      if (!lastSmoke.hasOwnProperty(self._id) || time - lastSmoke[self._id] > interval) {
+        smokes.push({
+          x: self.posX + Math.random() - 0.5,
+          y: self.posY + Math.random() - 0.5,
+          radius: 0.15 + (0.75 - self.health) + Math.random() * 0.3,
+          alpha: 100
+        });
+        lastSmoke[self._id] = time;
+      }
+    } // draw ships
+
 
     ctx.lineWidth = 1;
 
     for (const ship of ships) {
       drawShip(ship, unitSize);
+
+      if (ship.health < 0.75) {
+        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 12);
+
+        if (!lastSmoke.hasOwnProperty(ship._id) || time - lastSmoke[ship._id] > interval) {
+          smokes.push({
+            x: ship.posX + Math.random() - 0.5,
+            y: ship.posY + Math.random() - 0.5,
+            radius: 0.15 + (0.75 - ship.health) + Math.random() * 0.3,
+            alpha: 100
+          });
+          lastSmoke[ship._id] = time;
+        }
+      }
     } // draw bullets
 
 
@@ -900,16 +992,44 @@ const frame = time => {
     line.alpha -= 1;
   }
 
-  lines = lines.filter(line => line.alpha > 0);
+  lines = lines.filter(line => line.alpha > 0); // draw smokes
+
+  for (const smoke of smokes) {
+    drawSmoke(smoke, unitSize);
+    smoke.radius += 0.015;
+    smoke.alpha -= 1;
+  }
+
+  smokes = smokes.filter(smoke => smoke.alpha > 0);
+
+  for (const shipid of Object.keys(lastSmoke)) {
+    if (time - lastSmoke[shipid] >= 5000) {
+      delete lastSmoke[shipid];
+    }
+  }
+
+  for (const bubble of spawnBubbles) {
+    bubbles.push(bubble);
+  }
+
+  spawnBubbles = []; // draw bubbles
+
+  for (const bubble of bubbles) {
+    drawBubble(bubble, unitSize);
+    bubble.radius += 0.05;
+    bubble.alpha -= 1;
+  }
+
+  bubbles = bubbles.filter(bubble => bubble.alpha > 0);
 
   if (!self.dead) {
     // draw black mask
-    const bgradient = ctx.createRadialGradient(cx, cy, (physics.MAX_BULLET_DISTANCE - 1) * unitSize, cx, cy, (physics.MAX_BULLET_DISTANCE + 10) * unitSize);
+    const bgradient = ctx.createRadialGradient(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, cx, cy, (physics.VIEW_DISTANCE + 10) * unitSize);
     bgradient.addColorStop(0, 'rgba(0,0,0,0)');
     bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)');
     bgradient.addColorStop(1, 'rgba(0,0,0,0.9)');
     ctx.beginPath();
-    ctx.arc(cx, cy, (physics.MAX_BULLET_DISTANCE - 1) * unitSize, 0, 2 * Math.PI);
+    ctx.arc(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, 0, 2 * Math.PI);
     ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
     ctx.fillStyle = bgradient;
     ctx.fill();
@@ -973,13 +1093,14 @@ const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
 const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
+const VIEW_DISTANCE = 50;
 const MAX_BULLET_DISTANCE = 50;
-const DELAY_BETWEEN_BULLETS_MS = 250;
+const DELAY_BETWEEN_BULLETS_MS = 200;
 const RUBBERBAND_BUFFER = 80;
 
 const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
 
-const PLANET_CHUNK_SIZE = MAX_BULLET_DISTANCE * 2 + 1;
+const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 2 + 1;
 let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
@@ -1167,6 +1288,7 @@ module.exports = {
   MAX_SHIP_VELOCITY,
   BULLET_VELOCITY,
   LATCH_VELOCITY,
+  VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
   DELAY_BETWEEN_BULLETS_MS,
   RUBBERBAND_BUFFER,
@@ -1247,6 +1369,19 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
   return o1 == 0 && onCollinearSegment(a1, a2, b1) || o2 == 0 && onCollinearSegment(a1, b2, b1) || o3 == 0 && onCollinearSegment(a2, a1, b2) || o4 == 0 && onCollinearSegment(a2, b1, b2);
 };
 
+const closestSynchroDistance = (a1, a2, b1, b2) => {
+  const A = a1[0] - b1[0];
+  const B = a2[0] - a1[0] - (b2[0] - b1[0]);
+  const C = a1[1] - b1[1];
+  const D = a2[1] - a1[1] - (b2[1] - b1[1]);
+
+  if (B == 0 && D == 0) {
+    return 0;
+  }
+
+  return -(A * B + C * D) / (B * B + D * D);
+};
+
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
   return lineIntersectsLine(l1, l2, t1, t2) || lineIntersectsLine(l1, l2, t2, t3) || lineIntersectsLine(l1, l2, t3, t1);
 };
@@ -1280,13 +1415,17 @@ const getShipPoints = ship => {
   return [rotatePoint(s, c, 0, -1), rotatePoint(s, c, +1, +1.5), rotatePoint(s, c, 0, +1), rotatePoint(s, c, -1, +1.5)];
 };
 
-const getRealShipPoints = ship => {
+const getOffsetShipPoints = (ship, x, y) => {
   if (!ship) {
     return [];
   }
 
   const points = getShipPoints(ship);
-  return [[points[0][0] + ship.posX, points[0][1] + ship.posY], [points[1][0] + ship.posX, points[1][1] + ship.posY], [points[2][0] + ship.posX, points[2][1] + ship.posY], [points[3][0] + ship.posX, points[3][1] + ship.posY]];
+  return [[points[0][0] + x, points[0][1] + y], [points[1][0] + x, points[1][1] + y], [points[2][0] + x, points[2][1] + y], [points[3][0] + x, points[3][1] + y]];
+};
+
+const getRealShipPoints = ship => {
+  return getOffsetShipPoints(ship, ship.posX, ship.posY);
 };
 
 const getCollisionPoints = ship => {
@@ -1312,10 +1451,12 @@ const getThrusterPoints = ship => {
 module.exports = {
   pointInTriangle,
   lineIntersectsLine,
+  closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,
   getPlanetAngleMultiplier,
   getShipPoints,
+  getOffsetShipPoints,
   getRealShipPoints,
   getCollisionPoints,
   getThrusterPoints

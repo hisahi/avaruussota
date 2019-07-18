@@ -29,6 +29,7 @@ const newBullet = () => ({
   velX: 0, velY: 0,           // velocity X, Y
   dist: 0,                    // distance taken
   shooter: null,
+  shooterName: '',
 
   dead: false,
   _id: bulletCounter.next()
@@ -87,7 +88,7 @@ const gameFactory = (wss) => {
 
   const isValidSpawn = (ship, allowCloseSpawn) => {
     const d = Math.hypot(ship.posX, ship.posY)
-    const min = physics.MAX_BULLET_DISTANCE
+    const min = physics.VIEW_DISTANCE
     const radius = Math.min(rubberbandRadius, rubberbandRadiusGoal) - 10
     if (d > radius) {
       return false
@@ -117,15 +118,15 @@ const gameFactory = (wss) => {
   const spawn = (ship) => {
     let baseX = 0
     let baseY = 0
-    const max_tries = 128
+    const max_tries = 32
     let tries = max_tries
     while (tries > 0) {
       if (ships.length) {
         const randShip = ships[(ships.length * Math.random()) | 0]
         baseX = randShip.posX
         baseY = randShip.posY
-        baseX += physics.MAX_BULLET_DISTANCE * randomSign() * (Math.random() * 2)
-        baseY += physics.MAX_BULLET_DISTANCE * randomSign() * (Math.random() * 2)
+        baseX += physics.VIEW_DISTANCE * randomSign() * (Math.random() * 2)
+        baseY += physics.VIEW_DISTANCE * randomSign() * (Math.random() * 2)
       } else {
         baseX = rubberbandRadius * randomSign() * Math.random() * 0.5
         baseY = rubberbandRadius * randomSign() * Math.random() * 0.5
@@ -140,7 +141,7 @@ const gameFactory = (wss) => {
         ship.orient = 0
       }
       --tries
-      if (isValidSpawn(ship, tries < 8)) {
+      if (isValidSpawn(ship, tries < 4)) {
         break
       }
     }
@@ -170,10 +171,42 @@ const gameFactory = (wss) => {
   }
 
   const moveShips = (mul) => {
+    const dist = physics.MAX_SHIP_VELOCITY + 1
     for (const id of Object.keys(ships)) {
       const ship = ships[id]
-      ship.posX += mul * ship.velX
-      ship.posY += mul * ship.velY
+      ship.posXnew = ship.posX + mul * ship.velX
+      ship.posYnew = ship.posY + mul * ship.velY
+    }
+
+    for (const id1 of Object.keys(ships)) {
+      const ship1 = ships[id1]
+      for (const id2 of Object.keys(ships)) {
+        if (id1 == id2) {
+          continue
+        }
+        const ship2 = ships[id2]
+        if (Math.abs(ship1.posX - ship2.posX) < dist &&
+          Math.abs(ship1.posY - ship2.posY) < dist) {
+          const t = geom.closestSynchroDistance(
+            [ship1.posX, ship1.posY],
+            [ship1.posXnew, ship1.posYnew],
+            [ship2.posX, ship2.posY],
+            [ship2.posXnew, ship2.posYnew])
+          if (0 <= t && t <= 1) {
+            ship1.posX = ship1.posX + t * ship1.velX
+            ship1.posY = ship1.posY + t * ship1.velY
+            ship2.posX = ship2.posX + t * ship2.velX
+            ship2.posY = ship2.posY + t * ship2.velY
+            testShipShipCollision(ship1, ship2)
+          }
+        }
+      }
+    }
+
+    for (const id of Object.keys(ships)) {
+      const ship = ships[id]
+      ship.posX = ship.posXnew
+      ship.posY = ship.posYnew
       ships[id] = ship
     }
   }
@@ -223,33 +256,14 @@ const gameFactory = (wss) => {
     }
   }
 
-  const findShipShipCollisions = () => {
-    const shipIds = Object.keys(ships)
-    const collisions = []
-
-    for (const shipId1 of shipIds) {
-      const ship1 = ships[shipId1]
-      const [p1, p2, p3] = geom.getCollisionPoints(ship1)
-      for (const shipId2 of shipIds) {
-        if (shipId1 == shipId2) {
-          continue
-        }
-        const ship2 = ships[shipId2]
-        
-        if (Math.abs(ship1.posX - ship2.posX) < 2 &&
-            Math.abs(ship1.posY - ship2.posY) < 2) {
-          const [q1, q2,   , q4] = geom.getRealShipPoints(ship2)
-          if (geom.pointInTriangle(q1, q2, q4, p1)
-            || geom.pointInTriangle(q1, q2, q4, p2)
-            || geom.pointInTriangle(q1, q2, q4, p3)) {
-            collisions.push([ship1, ship2])
-          }
-        } 
-      }
-    }
-
-    for (const [ship1, ship2] of collisions) { 
-      if (!ship1.dead && !ship2.dead) {
+  const testShipShipCollision = (ship1, ship2) => {
+    const [p1, p2, p3] = geom.getCollisionPoints(ship1)
+    if (Math.abs(ship1.posX - ship2.posX) < 2 &&
+        Math.abs(ship1.posY - ship2.posY) < 2) {
+      const [q1, q2,   , q4] = geom.getRealShipPoints(ship2)
+      if (geom.pointInTriangle(q1, q2, q4, p1)
+        || geom.pointInTriangle(q1, q2, q4, p2)
+        || geom.pointInTriangle(q1, q2, q4, p3)) {
         handleShipShipCollision(ship1, ship2)
       }
     }
@@ -331,9 +345,11 @@ const gameFactory = (wss) => {
     const shooter = ships[bullet.shooter]
     ship.health -= 0.4
     if (ship.health <= 0) {
-      lastSocket[ship._id].send(`defeated ${shooter.name}`)
-      ++shooter.score
-      ships[bullet.shooter] = shooter
+      lastSocket[ship._id].send(`defeated ${bullet.shooterName}`)
+      if (shooter) {
+        ++shooter.score
+        ships[bullet.shooter] = shooter
+      }
       killShip(ship)
     } else {
       ships[ship._id] = ship
@@ -348,10 +364,12 @@ const gameFactory = (wss) => {
   }
 
   const latchPlanetWithAngle = (ship, planet, angle) => {
+    const x = planet.x + (planet.radius + 1.175) * Math.sin(angle)
+    const y = planet.y + (planet.radius + 1.175) * Math.cos(angle)
     ship.velX = 0
     ship.velY = 0
-    ship.posX = planet.x + (planet.radius + 1.175) * Math.sin(angle)
-    ship.posY = planet.y + (planet.radius + 1.175) * Math.cos(angle)
+    ship.posX = x
+    ship.posY = y
     ship.orient = -angle
     ship.latched = ship.accel === null
     ships[ship._id] = ship
@@ -369,7 +387,10 @@ const gameFactory = (wss) => {
     const col_mul = geom.getPlanetAngleMultiplier(ship.orient, playerAngle)
     const col_vel = (physics.MAX_SHIP_VELOCITY / 2) * col_mul
     const damage = Math.pow(v / col_vel, 1.25)
-    if (!ship.accel && v > 0 && v < (physics.LATCH_VELOCITY * (ship.brake !== null ? 2.5 : 1))) {
+    if (!ship.accel 
+      && v > 0 
+      && v < (physics.LATCH_VELOCITY * (ship.brake !== null ? 2.5 : 1)) 
+      && Math.hypot(ship.posX, ship.posY) < Math.min(rubberbandRadius, rubberbandRadiusGoal)) {
       latchPlanet(ship, planet)
       return
     }
@@ -456,7 +477,7 @@ const gameFactory = (wss) => {
   const announceNearby = () => {
     const shipIds = Object.keys(ships)
     const bulletIds = Object.keys(bullets)
-    const md = (physics.MAX_BULLET_DISTANCE + 2)
+    const md = (physics.VIEW_DISTANCE + 3)
     for (const selfId of shipIds) {
       const self = ships[selfId]
       const nearbyShips = []
@@ -498,20 +519,9 @@ const gameFactory = (wss) => {
   const oneTick = () => {
     shipAcceleration()
     findShipPlanetCollisions()
-    
-    moveShips(0.25)
-    findShipShipCollisions()
-
-    moveShips(0.25)
-    findShipShipCollisions()
 
     moveBullets(1)
-    
-    moveShips(0.25)
-    findShipShipCollisions()
-
-    moveShips(0.25)
-    findShipShipCollisions()
+    moveShips(1)
 
     updateRubberband()
     announceNearby()
@@ -564,7 +574,8 @@ const gameFactory = (wss) => {
         velX: physics.BULLET_VELOCITY * Math.sin(-ship.orient),
         velY: physics.BULLET_VELOCITY * Math.cos(-ship.orient),
         dist: 0,
-        shooter: ship._id
+        shooter: ship._id,
+        shooterName: ship.name
       }
       bullets[bullet._id] = bullet
 
