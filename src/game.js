@@ -522,7 +522,7 @@ const gameFactory = (wss) => {
       rubberbandRadius = Math.min(rubberbandRadiusGoal, rubberbandRadius + 0.2)
     } else if (rubberbandRadiusGoal < rubberbandRadius) {
       const maximalDist = -0.1 + Math.max.call(null, Object.values(ships).map(ship => Math.hypot(ship.posX, ship.posY)))
-      rubberbandRadius = Math.min(maximalDist, Math.max(rubberbandRadiusGoal, rubberbandRadius - 0.05))
+      rubberbandRadius = Math.max(Math.max(rubberbandRadiusGoal, maximalDist), rubberbandRadius - 0.05)
     }
   }
 

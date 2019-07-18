@@ -877,20 +877,22 @@ const frame = (time) => {
   
   if (!self.dead) {
     // draw red mask
-    const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
-      cy + self.posY * unitSize,
-      (rubber - 1) * unitSize,
-      cx + self.posX * unitSize,
-      cy + self.posY * unitSize,
-      (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize)
-    gradient.addColorStop(0, 'rgba(192,192,192,0)')
-    gradient.addColorStop(1, 'rgba(192,192,192,0.25)')
-    ctx.beginPath()
-    ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, 
-      rubber * unitSize, 0, 2 * Math.PI)
-    ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
-    ctx.fillStyle = gradient
-    ctx.fill()
+    if (rubber > 1) {
+      const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
+        cy + self.posY * unitSize,
+        (rubber - 1) * unitSize,
+        cx + self.posX * unitSize,
+        cy + self.posY * unitSize,
+        (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize)
+      gradient.addColorStop(0, 'rgba(192,192,192,0)')
+      gradient.addColorStop(1, 'rgba(192,192,192,0.25)')
+      ctx.beginPath()
+      ctx.arc(cx + self.posX * unitSize, cy + self.posY * unitSize, 
+        rubber * unitSize, 0, 2 * Math.PI)
+      ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height)
+      ctx.fillStyle = gradient
+      ctx.fill()
+    }
 
     // draw player ship
     ctx.lineWidth = 1.5
