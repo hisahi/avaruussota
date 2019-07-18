@@ -1,3 +1,4 @@
+const Cookies = require('js-cookie')
 const physics = require('../src/physics')
 const geom = require('../src/utils/geom')
 const chron = require('../src/utils/chron')
@@ -10,13 +11,15 @@ const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
 const TICK_MS = 1000 / tps
 const PLANET_SPIN_SPEED = 0.02
-const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0, orient: 0 }
+const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0, orient: 0, speedMul: 1 }
+const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5]
 
 let lcg = new LCG(0)
 let inGame = false
 let ws = null
 let token = null
 let self = BASE_SELF
+let connectTimer = null
 
 let dead = false
 let firing = false
@@ -45,18 +48,38 @@ let planetSeed = 0
 let dialogOpacity = 0
 let damageAlpha = 0
 let damageGot = 0
-let spawnBubbles = []
+let zoom = 1
 
 let lastSmoke = {}
 
 let last_partial = null
 let send_turn = false
 
+let firingInterval = 200
+
 document.getElementById('scoreanimation').style.animation = 'none'
 document.getElementById('scoreanimation').style.opacity = '0'
 
 const isMobile = () => {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+}
+
+if (isMobile()) {
+  zoom = 1.5
+}
+
+const updateZoomText = () => {
+  document.getElementById('btnzoom').textContent = `zoom: ${(zoom * 100) | 0}%`
+}
+
+const nextZoom = (f) => {
+  let indx = (ZOOM_LEVELS.indexOf(zoom) + f) % ZOOM_LEVELS.length
+  if (indx < 0) {
+    indx += ZOOM_LEVELS.length
+  }
+  zoom = ZOOM_LEVELS[indx]
+  Cookies.set('avaruuspeli-zoom', indx)
+  updateZoomText()
 }
 
 const checkSize = () => {
@@ -69,6 +92,7 @@ const checkSize = () => {
 
 document.addEventListener('resize', () => checkSize())
 checkSize()
+updateZoomText()
 
 const showDialog = () => {
   dialogOpacity = 0
@@ -96,11 +120,21 @@ const hideLose = () => {
   document.getElementById('finalscore').style.display = 'none'
 }
 
+const disconnect = () => {
+  hideLose()
+  document.getElementById('disconnected').style.display = 'inline'
+  leaveGame()
+}
+
 const joinGame = () => {
   if (!inGame) {
     document.getElementById('scoreanimation').style.animation = 'none'
     document.getElementById('scoreanimation').style.opacity = '0'
     document.getElementById('onlinestatus').textContent = 'connecting'
+
+    connectTimer = setTimeout(() => disconnect(), 5000)
+    firingInterval = document.getElementById('perkselect').value.trim() == 'fasterrate' ? 150 : 200
+
     document.getElementById('btnplay').blur()
     hideDialog()
 
@@ -124,29 +158,35 @@ const joinGame = () => {
         document.getElementById('onlinestatus').textContent = 'in game'
         token = args
         let nick = document.getElementById('nick').value.trim()
+        const perk = document.getElementById('perkselect').value.trim()
         if (nick.length < 1) {
           nick = ((100000000 * Math.random()) | 0).toString()
+        } else {
+          Cookies.set('avaruuspeli-name', nick)
         }
-        send(`nick ${nick}`)
+        Cookies.set('avaruuspeli-perk', perk)
+        send(`nick ${JSON.stringify([nick, perk])}`)
       } else if (cmd === 'pong') {
         const now = performance.now()
         document.getElementById('onlinestatus').textContent = `in game, ping: ${Math.max(now - JSON.parse(args), 0).toFixed(1)}ms`
       } else if (cmd === 'data') {
         no_data = 0
         let obj = null
+        let addBullets = null
         let oldHealth = {}
         for (const ship of ships) {
           oldHealth[ship._id] = ship.health
         }
-        [obj, ships, bullets, playerCount, rubber, planetSeed] = JSON.parse(args)
+        [obj, ships, addBullets, playerCount, rubber, planetSeed] = JSON.parse(args)
         for (const ship of ships) {
           if (oldHealth.hasOwnProperty(ship._id) && oldHealth[ship._id] > ship.health) {
-            spawnBubbles.push({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.2 * (1 + oldHealth[ship._id] - ship.health) })
+            bubbles.push({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.3 * (1 + oldHealth[ship._id] - ship.health) })
           }
         }
         if (self.dead) {
           self = obj
           self.dead = false
+          self.highAgility = document.getElementById('perkselect').value.trim() == 'movespeed'
         } else {
           if (Math.abs(obj.posX - self.posX) > 0.3) {
             self.posX = (self.posX + obj.posX) / 2
@@ -185,15 +225,20 @@ const joinGame = () => {
           self.dead = obj.dead
           if (obj.health < self.health) {
             damageAlpha = 0.8 * (self.health - obj.health)
-            damageGot = performance.now() + (self.health - obj.health) * 2
-            spawnBubbles.push({ x: self.posX, y: self.posY, alpha: 100, radius: 0.2 * (1 + self.health - obj.health) })
+            damageGot = performance.now() + (self.health - obj.health) * 700
+            bubbles.push({ x: self.posX, y: self.posY, alpha: 100, radius: 0.3 * (1 + self.health - obj.health) })
           }
           self.health = obj.health
           self.latched = obj.latched
+          self.speedMul = obj.speedMul
+          self.overdrive = obj.overdrive
         }
         if (physics.getPlanetSeed() != planetSeed) {
           physics.setPlanetSeed(planetSeed)
           planets = physics.getPlanets(self.posX, self.posY)
+        }
+        if (addBullets.length) {
+          bullets = [...bullets, ...addBullets.filter(x => x)]
         }
         physics.setPlanetSeed(planetSeed)
         document.getElementById('playerCountNum').textContent = playerCount
@@ -241,24 +286,25 @@ const joinGame = () => {
     
     ws.addEventListener('open', () => {
       dead = false
+      if (connectTimer !== null) {
+        clearTimeout(connectTimer)
+        connectTimer = null
+      }
       document.getElementById('onlinestatus').textContent = 'waiting for spawn'
       ws.send('join')
       checkSize()
       pinger = setInterval(() => {
-        if (++no_data > 8) {
-          hideLose()
-          document.getElementById('disconnected').style.display = 'inline'
-          leaveGame()
+        if (++no_data > 8 || ws == null) {
+          disconnect()
+          return
         }
         ws.send('ping ' + performance.now())
-      }, 1000)
+      }, 500)
     })
     
     ws.addEventListener('close', () => {
       if (!dead) {
-        hideLose()
-        document.getElementById('disconnected').style.display = 'inline'
-        leaveGame()
+        disconnect()
       }
       dead = true
     })
@@ -331,7 +377,7 @@ const serverTick = () => {
   if (brake) {
     physics.brake(self)
   }
-  if (firing && (chron.timeMs() - self.lastFired) >= physics.DELAY_BETWEEN_BULLETS_MS) {
+  if (firing && (chron.timeMs() - self.lastFired) >= firingInterval) {
     physics.recoil(self)
   }
   physics.inertia(self)
@@ -339,6 +385,10 @@ const serverTick = () => {
     physics.rubberband(self, rubber)
     planets = physics.getPlanets(self.posX, self.posY)
     physics.gravityShip(self, planets)
+  }
+
+  for (const ship of ships) {
+    physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY))
   }
 
   for (const bullet of bullets) {
@@ -355,12 +405,20 @@ const partialTick = (delta) => {
     if (turn_left && !turn_right) {
       self.orient -= turn_left_ramp * TURN_UNIT * tpf
       turn_left_ramp = Math.min(1, turn_left_ramp + tpf * 0.1)
-      accelStart = chron.timeMs()
+      if (self.highAgility) {
+        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128
+      } else {
+        accelStart = chron.timeMs()
+      }
       send_turn = true
     } else if (turn_right && !turn_left) {
       self.orient += turn_right_ramp * TURN_UNIT * tpf
       turn_right_ramp = Math.min(1, turn_right_ramp + tpf * 0.1)
-      accelStart = chron.timeMs()
+      if (self.highAgility) {
+        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128
+      } else {
+        accelStart = chron.timeMs()
+      }
       send_turn = true
     }
   }
@@ -376,7 +434,9 @@ const partialTick = (delta) => {
   for (const bullet of bullets) {
     bullet.posX += tpf * bullet.velX
     bullet.posY += tpf * bullet.velY
+    bullet.dist += tpf * bullet.velocity
   }
+  bullets = bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)
 }
 
 const jouter = document.getElementById('joystickouter')
@@ -537,6 +597,8 @@ window.addEventListener('keyup', (e) => {
   } else if (e.code == 'KeyD') {
     turn_right_ramp = 0
     turn_right = false
+  } else if (e.code == 'KeyZ') {
+    nextZoom(e.shiftKey ? -1 : 1)
   } else if (e.code == 'Space') {
     firing = false
     send_turn = true
@@ -739,6 +801,10 @@ const drawPlanet = (planet, scale) => {
 }
 
 const explosion = (ship) => {
+  if (!ship) {
+    return
+  }
+
   const [p1, p2, p3, p4] = geom.getShipPoints(ship)
   let [x1, y1] = p1
   let [x2, y2] = p2
@@ -767,8 +833,8 @@ const frame = (time) => {
   ctx.canvas.height = window.innerHeight
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
-  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3/4 : 1/2) 
-    / physics.VIEW_DISTANCE)
+  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) 
+    / physics.VIEW_DISTANCE * (zoom / 2)
 
   let delta = 0
   if (last_partial != null) {
@@ -808,7 +874,7 @@ const frame = (time) => {
     ctx.lineTo(ctx.canvas.width, dy)
     ctx.stroke()
   }
-
+  
   if (!self.dead) {
     // draw red mask
     const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
@@ -830,9 +896,13 @@ const frame = (time) => {
     ctx.lineWidth = 1.5
     drawShip(self, unitSize)
     if (self.health < 0.75) {
-      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 12)
+      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6)
       if (!lastSmoke.hasOwnProperty(self._id) || time - lastSmoke[self._id] > interval) {
-        smokes.push({ x: self.posX + Math.random() - 0.5, y: self.posY + Math.random() - 0.5, radius: 0.15 + (0.75 - self.health) + Math.random() * 0.3, alpha: 100 })
+        smokes.push({ 
+          x: self.posX + 1.5 * Math.random() - 0.75, 
+          y: self.posY + 1.5 * Math.random() - 0.75, 
+          radius: 0.15 + (0.75 - self.health) + Math.random() * 0.3, 
+          alpha: 100 * Math.min(1, 1.4 - self.health) })
         lastSmoke[self._id] = time
       }
     }
@@ -842,9 +912,13 @@ const frame = (time) => {
     for (const ship of ships) {
       drawShip(ship, unitSize)
       if (ship.health < 0.75) {
-        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 12)
+        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 6)
         if (!lastSmoke.hasOwnProperty(ship._id) || time - lastSmoke[ship._id] > interval) {
-          smokes.push({ x: ship.posX + Math.random() - 0.5, y: ship.posY + Math.random() - 0.5, radius: 0.15 + (0.75 - ship.health) + Math.random() * 0.3, alpha: 100 })
+          smokes.push({ 
+            x: ship.posX + 1.5 * Math.random() - 0.75, 
+            y: ship.posY + 1.5 * Math.random() - 0.75, 
+            radius: 0.15 + (0.75 - ship.health) + Math.random() * 0.3, 
+            alpha: 100 * Math.min(1, 1.4 - ship.health) })
           lastSmoke[ship._id] = time
         }
       }
@@ -890,11 +964,6 @@ const frame = (time) => {
     }
   }
 
-  for (const bubble of spawnBubbles) {
-    bubbles.push(bubble)
-  }
-  spawnBubbles = []
-
   // draw bubbles
   for (const bubble of bubbles) {
     drawBubble(bubble, unitSize)
@@ -921,6 +990,7 @@ const frame = (time) => {
     ctx.fill()
 
     if (damageAlpha > 0) {
+      ctx.beginPath()
       ctx.fillStyle = `rgba(128,0,0,${damageAlpha})`
       ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height)
       ctx.fill()
@@ -948,6 +1018,29 @@ const frame = (time) => {
   window.requestAnimationFrame(frame)
 }
 
+const tryReadCookies = () => {
+  const name = Cookies.get('avaruuspeli-name')
+  if (name) {
+    document.getElementById('nick').value = name.substring(0, 20).trim()
+  }
+  const perk = Cookies.get('avaruuspeli-perk')
+  if (perk) {
+    document.getElementById('perkselect').value = ''
+    for (let i = 0; i < document.getElementById('perkselect').options.length; ++i) {
+      const option = document.getElementById('perkselect').options[i];
+      if (option.value == perk) {
+        option.selected = true
+        break
+      }
+    }
+  }
+  const cookieZoom = Cookies.get('avaruuspeli-zoom') | 0
+  if (isFinite(cookieZoom)) {
+    zoom = ZOOM_LEVELS[(cookieZoom + 1) % ZOOM_LEVELS.length]
+    nextZoom(-1)
+  }
+}
+
 document.getElementById('btnplay').addEventListener('click', () => joinGame())
 document.getElementById('btnfs').addEventListener('click', () => {
   if (document.fullscreenElement) {
@@ -956,9 +1049,11 @@ document.getElementById('btnfs').addEventListener('click', () => {
     document.documentElement.requestFullscreen()
   }
 })
+document.getElementById('btnzoom').addEventListener('click', () => nextZoom(1))
 
 window.requestAnimationFrame(frame)
 
 leaveGame()
+tryReadCookies()
 showDialog()
 hideLose()

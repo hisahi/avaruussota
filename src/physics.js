@@ -1,5 +1,5 @@
 const GRAV = 6.67e-11
-const TICKS_PER_SECOND = 24
+const TICKS_PER_SECOND = 20
 const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND
 const MIN_SHIP_VELOCITY = 0.01
 const LATCH_VELOCITY = 0.2
@@ -12,7 +12,7 @@ const MAX_BULLET_DISTANCE = 50
 const DELAY_BETWEEN_BULLETS_MS = 200
 const RUBBERBAND_BUFFER = 80
 const LCG = require('./utils/lcg')
-const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 2 + 1
+const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1
 
 let PLANET_SEED = 1340985553
 
@@ -30,7 +30,7 @@ const checkMinVelocity = (ship) => {
 
 const checkMaxVelocity = (ship) => {
   const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health)
-  const v = Math.hypot(ship.velX, ship.velY)
+  const v = Math.hypot(ship.velX, ship.velY) * ship.speedMul
   if (v > maxvel) {
     ship.velX *= maxvel / v
     ship.velY *= maxvel / v
@@ -64,32 +64,12 @@ const getPlanetsForChunk = (cx, cy) => {
 }
 
 const getPlanets = (x, y) => {
-  const x1 = Math.floor((x - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  const x2 = Math.floor(x / PLANET_CHUNK_SIZE)
-  const x3 = Math.floor((x + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  const y1 = Math.floor((y - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
-  const y2 = Math.floor(y / PLANET_CHUNK_SIZE)
-  const y3 = Math.floor((y + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE)
+  const x0 = Math.floor(x / PLANET_CHUNK_SIZE)
+  const y0 = Math.floor(y / PLANET_CHUNK_SIZE)
 
-  const xu = []
-  const yu = []
+  const xu = [x0 - 2, x0 - 1, x0, x0 + 1, x0 + 2]
+  const yu = [y0 - 2, y0 - 1, y0, y0 + 1, y0 + 2]
   let planets = []
-
-  xu.push(x2)
-  if (x1 != x2) {
-    xu.push(x1)
-  }
-  if (x2 != x3) {
-    xu.push(x3)
-  }
-
-  yu.push(y2)
-  if (y1 != y2) {
-    yu.push(y1)
-  }
-  if (y2 != y3) {
-    yu.push(y3)
-  }
 
   for (const x of xu) {
     for (const y of yu) {
@@ -101,7 +81,10 @@ const getPlanets = (x, y) => {
 }
 
 const accel = (ship, accelTimeMs) => {
-  const accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health)
+  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health)
+  if (ship.speedMul !== 1) {
+    accelMul *= Math.sqrt(ship.speedMul)
+  }
   ship.velX += accelMul * Math.sin(-ship.orient)
   ship.velY += accelMul * Math.cos(-ship.orient)
   checkMaxVelocity(ship)
@@ -138,8 +121,8 @@ const gravityBullet = (bullet, planets) => {
     }
   }
   const d = Math.hypot(bullet.velX, bullet.velY)
-  bullet.velX *= BULLET_VELOCITY / d
-  bullet.velY *= BULLET_VELOCITY / d
+  bullet.velX *= bullet.velocity / d
+  bullet.velY *= bullet.velocity / d
 }
 
 const gravityShip = (ship, planets) => {
@@ -190,6 +173,7 @@ module.exports = {
   LATCH_VELOCITY,
   VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
+  PLANET_CHUNK_SIZE,
   DELAY_BETWEEN_BULLETS_MS,
   RUBBERBAND_BUFFER,
   accel,

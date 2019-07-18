@@ -93,6 +93,8 @@
 /*! no static exports found */
 /***/ (function(module, exports, __webpack_require__) {
 
+const Cookies = __webpack_require__(/*! js-cookie */ "./node_modules/js-cookie/src/js.cookie.js");
+
 const physics = __webpack_require__(/*! ../src/physics */ "./src/physics.js");
 
 const geom = __webpack_require__(/*! ../src/utils/geom */ "./src/utils/geom.js");
@@ -115,13 +117,16 @@ const BASE_SELF = {
   posY: 0,
   velX: 0,
   velY: 0,
-  orient: 0
+  orient: 0,
+  speedMul: 1
 };
+const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5];
 let lcg = new LCG(0);
 let inGame = false;
 let ws = null;
 let token = null;
 let self = BASE_SELF;
+let connectTimer = null;
 let dead = false;
 let firing = false;
 let accel = false;
@@ -148,15 +153,36 @@ let planetSeed = 0;
 let dialogOpacity = 0;
 let damageAlpha = 0;
 let damageGot = 0;
-let spawnBubbles = [];
+let zoom = 1;
 let lastSmoke = {};
 let last_partial = null;
 let send_turn = false;
+let firingInterval = 200;
 document.getElementById('scoreanimation').style.animation = 'none';
 document.getElementById('scoreanimation').style.opacity = '0';
 
 const isMobile = () => {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+};
+
+if (isMobile()) {
+  zoom = 1.5;
+}
+
+const updateZoomText = () => {
+  document.getElementById('btnzoom').textContent = `zoom: ${zoom * 100 | 0}%`;
+};
+
+const nextZoom = f => {
+  let indx = (ZOOM_LEVELS.indexOf(zoom) + f) % ZOOM_LEVELS.length;
+
+  if (indx < 0) {
+    indx += ZOOM_LEVELS.length;
+  }
+
+  zoom = ZOOM_LEVELS[indx];
+  Cookies.set('avaruuspeli-zoom', indx);
+  updateZoomText();
 };
 
 const checkSize = () => {
@@ -169,6 +195,7 @@ const checkSize = () => {
 
 document.addEventListener('resize', () => checkSize());
 checkSize();
+updateZoomText();
 
 const showDialog = () => {
   dialogOpacity = 0;
@@ -196,11 +223,19 @@ const hideLose = () => {
   document.getElementById('finalscore').style.display = 'none';
 };
 
+const disconnect = () => {
+  hideLose();
+  document.getElementById('disconnected').style.display = 'inline';
+  leaveGame();
+};
+
 const joinGame = () => {
   if (!inGame) {
     document.getElementById('scoreanimation').style.animation = 'none';
     document.getElementById('scoreanimation').style.opacity = '0';
     document.getElementById('onlinestatus').textContent = 'connecting';
+    connectTimer = setTimeout(() => disconnect(), 5000);
+    firingInterval = document.getElementById('perkselect').value.trim() == 'fasterrate' ? 150 : 200;
     document.getElementById('btnplay').blur();
     hideDialog();
     lines = [];
@@ -222,33 +257,38 @@ const joinGame = () => {
         document.getElementById('onlinestatus').textContent = 'in game';
         token = args;
         let nick = document.getElementById('nick').value.trim();
+        const perk = document.getElementById('perkselect').value.trim();
 
         if (nick.length < 1) {
           nick = (100000000 * Math.random() | 0).toString();
+        } else {
+          Cookies.set('avaruuspeli-name', nick);
         }
 
-        send(`nick ${nick}`);
+        Cookies.set('avaruuspeli-perk', perk);
+        send(`nick ${JSON.stringify([nick, perk])}`);
       } else if (cmd === 'pong') {
         const now = performance.now();
         document.getElementById('onlinestatus').textContent = `in game, ping: ${Math.max(now - JSON.parse(args), 0).toFixed(1)}ms`;
       } else if (cmd === 'data') {
         no_data = 0;
         let obj = null;
+        let addBullets = null;
         let oldHealth = {};
 
         for (const ship of ships) {
           oldHealth[ship._id] = ship.health;
         }
 
-        [obj, ships, bullets, playerCount, rubber, planetSeed] = JSON.parse(args);
+        [obj, ships, addBullets, playerCount, rubber, planetSeed] = JSON.parse(args);
 
         for (const ship of ships) {
           if (oldHealth.hasOwnProperty(ship._id) && oldHealth[ship._id] > ship.health) {
-            spawnBubbles.push({
+            bubbles.push({
               x: ship.posX,
               y: ship.posY,
               alpha: 100,
-              radius: 0.2 * (1 + oldHealth[ship._id] - ship.health)
+              radius: 0.3 * (1 + oldHealth[ship._id] - ship.health)
             });
           }
         }
@@ -256,6 +296,7 @@ const joinGame = () => {
         if (self.dead) {
           self = obj;
           self.dead = false;
+          self.highAgility = document.getElementById('perkselect').value.trim() == 'movespeed';
         } else {
           if (Math.abs(obj.posX - self.posX) > 0.3) {
             self.posX = (self.posX + obj.posX) / 2;
@@ -299,22 +340,28 @@ const joinGame = () => {
 
           if (obj.health < self.health) {
             damageAlpha = 0.8 * (self.health - obj.health);
-            damageGot = performance.now() + (self.health - obj.health) * 2;
-            spawnBubbles.push({
+            damageGot = performance.now() + (self.health - obj.health) * 700;
+            bubbles.push({
               x: self.posX,
               y: self.posY,
               alpha: 100,
-              radius: 0.2 * (1 + self.health - obj.health)
+              radius: 0.3 * (1 + self.health - obj.health)
             });
           }
 
           self.health = obj.health;
           self.latched = obj.latched;
+          self.speedMul = obj.speedMul;
+          self.overdrive = obj.overdrive;
         }
 
         if (physics.getPlanetSeed() != planetSeed) {
           physics.setPlanetSeed(planetSeed);
           planets = physics.getPlanets(self.posX, self.posY);
+        }
+
+        if (addBullets.length) {
+          bullets = [...bullets, ...addBullets.filter(x => x)];
         }
 
         physics.setPlanetSeed(planetSeed);
@@ -364,24 +411,27 @@ const joinGame = () => {
     });
     ws.addEventListener('open', () => {
       dead = false;
+
+      if (connectTimer !== null) {
+        clearTimeout(connectTimer);
+        connectTimer = null;
+      }
+
       document.getElementById('onlinestatus').textContent = 'waiting for spawn';
       ws.send('join');
       checkSize();
       pinger = setInterval(() => {
-        if (++no_data > 8) {
-          hideLose();
-          document.getElementById('disconnected').style.display = 'inline';
-          leaveGame();
+        if (++no_data > 8 || ws == null) {
+          disconnect();
+          return;
         }
 
         ws.send('ping ' + performance.now());
-      }, 1000);
+      }, 500);
     });
     ws.addEventListener('close', () => {
       if (!dead) {
-        hideLose();
-        document.getElementById('disconnected').style.display = 'inline';
-        leaveGame();
+        disconnect();
       }
 
       dead = true;
@@ -459,7 +509,7 @@ const serverTick = () => {
     physics.brake(self);
   }
 
-  if (firing && chron.timeMs() - self.lastFired >= physics.DELAY_BETWEEN_BULLETS_MS) {
+  if (firing && chron.timeMs() - self.lastFired >= firingInterval) {
     physics.recoil(self);
   }
 
@@ -469,6 +519,10 @@ const serverTick = () => {
     physics.rubberband(self, rubber);
     planets = physics.getPlanets(self.posX, self.posY);
     physics.gravityShip(self, planets);
+  }
+
+  for (const ship of ships) {
+    physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY));
   }
 
   for (const bullet of bullets) {
@@ -486,12 +540,24 @@ const partialTick = delta => {
     if (turn_left && !turn_right) {
       self.orient -= turn_left_ramp * TURN_UNIT * tpf;
       turn_left_ramp = Math.min(1, turn_left_ramp + tpf * 0.1);
-      accelStart = chron.timeMs();
+
+      if (self.highAgility) {
+        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128;
+      } else {
+        accelStart = chron.timeMs();
+      }
+
       send_turn = true;
     } else if (turn_right && !turn_left) {
       self.orient += turn_right_ramp * TURN_UNIT * tpf;
       turn_right_ramp = Math.min(1, turn_right_ramp + tpf * 0.1);
-      accelStart = chron.timeMs();
+
+      if (self.highAgility) {
+        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128;
+      } else {
+        accelStart = chron.timeMs();
+      }
+
       send_turn = true;
     }
   } // interpolate
@@ -508,7 +574,10 @@ const partialTick = delta => {
   for (const bullet of bullets) {
     bullet.posX += tpf * bullet.velX;
     bullet.posY += tpf * bullet.velY;
+    bullet.dist += tpf * bullet.velocity;
   }
+
+  bullets = bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE);
 };
 
 const jouter = document.getElementById('joystickouter');
@@ -656,6 +725,8 @@ window.addEventListener('keyup', e => {
   } else if (e.code == 'KeyD') {
     turn_right_ramp = 0;
     turn_right = false;
+  } else if (e.code == 'KeyZ') {
+    nextZoom(e.shiftKey ? -1 : 1);
   } else if (e.code == 'Space') {
     firing = false;
     send_turn = true;
@@ -862,6 +933,10 @@ const drawPlanet = (planet, scale) => {
 };
 
 const explosion = ship => {
+  if (!ship) {
+    return;
+  }
+
   const [p1, p2, p3, p4] = geom.getShipPoints(ship);
   let [x1, y1] = p1;
   let [x2, y2] = p2;
@@ -882,7 +957,7 @@ const frame = time => {
   ctx.canvas.height = window.innerHeight;
   const cx = ctx.canvas.width / 2;
   const cy = ctx.canvas.height / 2;
-  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) * ((isMobile() ? 3 / 4 : 1 / 2) / physics.VIEW_DISTANCE);
+  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) / physics.VIEW_DISTANCE * (zoom / 2);
   let delta = 0;
 
   if (last_partial != null) {
@@ -935,14 +1010,14 @@ const frame = time => {
     drawShip(self, unitSize);
 
     if (self.health < 0.75) {
-      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 12);
+      const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6);
 
       if (!lastSmoke.hasOwnProperty(self._id) || time - lastSmoke[self._id] > interval) {
         smokes.push({
-          x: self.posX + Math.random() - 0.5,
-          y: self.posY + Math.random() - 0.5,
+          x: self.posX + 1.5 * Math.random() - 0.75,
+          y: self.posY + 1.5 * Math.random() - 0.75,
           radius: 0.15 + (0.75 - self.health) + Math.random() * 0.3,
-          alpha: 100
+          alpha: 100 * Math.min(1, 1.4 - self.health)
         });
         lastSmoke[self._id] = time;
       }
@@ -955,14 +1030,14 @@ const frame = time => {
       drawShip(ship, unitSize);
 
       if (ship.health < 0.75) {
-        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 12);
+        const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 6);
 
         if (!lastSmoke.hasOwnProperty(ship._id) || time - lastSmoke[ship._id] > interval) {
           smokes.push({
-            x: ship.posX + Math.random() - 0.5,
-            y: ship.posY + Math.random() - 0.5,
+            x: ship.posX + 1.5 * Math.random() - 0.75,
+            y: ship.posY + 1.5 * Math.random() - 0.75,
             radius: 0.15 + (0.75 - ship.health) + Math.random() * 0.3,
-            alpha: 100
+            alpha: 100 * Math.min(1, 1.4 - ship.health)
           });
           lastSmoke[ship._id] = time;
         }
@@ -1006,13 +1081,8 @@ const frame = time => {
     if (time - lastSmoke[shipid] >= 5000) {
       delete lastSmoke[shipid];
     }
-  }
+  } // draw bubbles
 
-  for (const bubble of spawnBubbles) {
-    bubbles.push(bubble);
-  }
-
-  spawnBubbles = []; // draw bubbles
 
   for (const bubble of bubbles) {
     drawBubble(bubble, unitSize);
@@ -1035,6 +1105,7 @@ const frame = time => {
     ctx.fill();
 
     if (damageAlpha > 0) {
+      ctx.beginPath();
       ctx.fillStyle = `rgba(128,0,0,${damageAlpha})`;
       ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height);
       ctx.fill();
@@ -1062,6 +1133,36 @@ const frame = time => {
   window.requestAnimationFrame(frame);
 };
 
+const tryReadCookies = () => {
+  const name = Cookies.get('avaruuspeli-name');
+
+  if (name) {
+    document.getElementById('nick').value = name.substring(0, 20).trim();
+  }
+
+  const perk = Cookies.get('avaruuspeli-perk');
+
+  if (perk) {
+    document.getElementById('perkselect').value = '';
+
+    for (let i = 0; i < document.getElementById('perkselect').options.length; ++i) {
+      const option = document.getElementById('perkselect').options[i];
+
+      if (option.value == perk) {
+        option.selected = true;
+        break;
+      }
+    }
+  }
+
+  const cookieZoom = Cookies.get('avaruuspeli-zoom') | 0;
+
+  if (isFinite(cookieZoom)) {
+    zoom = ZOOM_LEVELS[(cookieZoom + 1) % ZOOM_LEVELS.length];
+    nextZoom(-1);
+  }
+};
+
 document.getElementById('btnplay').addEventListener('click', () => joinGame());
 document.getElementById('btnfs').addEventListener('click', () => {
   if (document.fullscreenElement) {
@@ -1070,10 +1171,202 @@ document.getElementById('btnfs').addEventListener('click', () => {
     document.documentElement.requestFullscreen();
   }
 });
+document.getElementById('btnzoom').addEventListener('click', () => nextZoom(1));
 window.requestAnimationFrame(frame);
 leaveGame();
+tryReadCookies();
 showDialog();
 hideLose();
+
+/***/ }),
+
+/***/ "./node_modules/js-cookie/src/js.cookie.js":
+/*!*************************************************!*\
+  !*** ./node_modules/js-cookie/src/js.cookie.js ***!
+  \*************************************************/
+/*! no static exports found */
+/***/ (function(module, exports, __webpack_require__) {
+
+var __WEBPACK_AMD_DEFINE_FACTORY__, __WEBPACK_AMD_DEFINE_RESULT__;/*!
+ * JavaScript Cookie v2.2.0
+ * https://github.com/js-cookie/js-cookie
+ *
+ * Copyright 2006, 2015 Klaus Hartl & Fagner Brack
+ * Released under the MIT license
+ */
+;
+
+(function (factory) {
+  var registeredInModuleLoader = false;
+
+  if (true) {
+    !(__WEBPACK_AMD_DEFINE_FACTORY__ = (factory),
+				__WEBPACK_AMD_DEFINE_RESULT__ = (typeof __WEBPACK_AMD_DEFINE_FACTORY__ === 'function' ?
+				(__WEBPACK_AMD_DEFINE_FACTORY__.call(exports, __webpack_require__, exports, module)) :
+				__WEBPACK_AMD_DEFINE_FACTORY__),
+				__WEBPACK_AMD_DEFINE_RESULT__ !== undefined && (module.exports = __WEBPACK_AMD_DEFINE_RESULT__));
+    registeredInModuleLoader = true;
+  }
+
+  if (true) {
+    module.exports = factory();
+    registeredInModuleLoader = true;
+  }
+
+  if (!registeredInModuleLoader) {
+    var OldCookies = window.Cookies;
+    var api = window.Cookies = factory();
+
+    api.noConflict = function () {
+      window.Cookies = OldCookies;
+      return api;
+    };
+  }
+})(function () {
+  function extend() {
+    var i = 0;
+    var result = {};
+
+    for (; i < arguments.length; i++) {
+      var attributes = arguments[i];
+
+      for (var key in attributes) {
+        result[key] = attributes[key];
+      }
+    }
+
+    return result;
+  }
+
+  function init(converter) {
+    function api(key, value, attributes) {
+      var result;
+
+      if (typeof document === 'undefined') {
+        return;
+      } // Write
+
+
+      if (arguments.length > 1) {
+        attributes = extend({
+          path: '/'
+        }, api.defaults, attributes);
+
+        if (typeof attributes.expires === 'number') {
+          var expires = new Date();
+          expires.setMilliseconds(expires.getMilliseconds() + attributes.expires * 864e+5);
+          attributes.expires = expires;
+        } // We're using "expires" because "max-age" is not supported by IE
+
+
+        attributes.expires = attributes.expires ? attributes.expires.toUTCString() : '';
+
+        try {
+          result = JSON.stringify(value);
+
+          if (/^[\{\[]/.test(result)) {
+            value = result;
+          }
+        } catch (e) {}
+
+        if (!converter.write) {
+          value = encodeURIComponent(String(value)).replace(/%(23|24|26|2B|3A|3C|3E|3D|2F|3F|40|5B|5D|5E|60|7B|7D|7C)/g, decodeURIComponent);
+        } else {
+          value = converter.write(value, key);
+        }
+
+        key = encodeURIComponent(String(key));
+        key = key.replace(/%(23|24|26|2B|5E|60|7C)/g, decodeURIComponent);
+        key = key.replace(/[\(\)]/g, escape);
+        var stringifiedAttributes = '';
+
+        for (var attributeName in attributes) {
+          if (!attributes[attributeName]) {
+            continue;
+          }
+
+          stringifiedAttributes += '; ' + attributeName;
+
+          if (attributes[attributeName] === true) {
+            continue;
+          }
+
+          stringifiedAttributes += '=' + attributes[attributeName];
+        }
+
+        return document.cookie = key + '=' + value + stringifiedAttributes;
+      } // Read
+
+
+      if (!key) {
+        result = {};
+      } // To prevent the for loop in the first place assign an empty array
+      // in case there are no cookies at all. Also prevents odd result when
+      // calling "get()"
+
+
+      var cookies = document.cookie ? document.cookie.split('; ') : [];
+      var rdecode = /(%[0-9A-Z]{2})+/g;
+      var i = 0;
+
+      for (; i < cookies.length; i++) {
+        var parts = cookies[i].split('=');
+        var cookie = parts.slice(1).join('=');
+
+        if (!this.json && cookie.charAt(0) === '"') {
+          cookie = cookie.slice(1, -1);
+        }
+
+        try {
+          var name = parts[0].replace(rdecode, decodeURIComponent);
+          cookie = converter.read ? converter.read(cookie, name) : converter(cookie, name) || cookie.replace(rdecode, decodeURIComponent);
+
+          if (this.json) {
+            try {
+              cookie = JSON.parse(cookie);
+            } catch (e) {}
+          }
+
+          if (key === name) {
+            result = cookie;
+            break;
+          }
+
+          if (!key) {
+            result[name] = cookie;
+          }
+        } catch (e) {}
+      }
+
+      return result;
+    }
+
+    api.set = api;
+
+    api.get = function (key) {
+      return api.call(api, key);
+    };
+
+    api.getJSON = function () {
+      return api.apply({
+        json: true
+      }, [].slice.call(arguments));
+    };
+
+    api.defaults = {};
+
+    api.remove = function (key, attributes) {
+      api(key, '', extend(attributes, {
+        expires: -1
+      }));
+    };
+
+    api.withConverter = init;
+    return api;
+  }
+
+  return init(function () {});
+});
 
 /***/ }),
 
@@ -1085,7 +1378,7 @@ hideLose();
 /***/ (function(module, exports, __webpack_require__) {
 
 const GRAV = 6.67e-11;
-const TICKS_PER_SECOND = 24;
+const TICKS_PER_SECOND = 20;
 const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND;
 const MIN_SHIP_VELOCITY = 0.01;
 const LATCH_VELOCITY = 0.2;
@@ -1100,7 +1393,7 @@ const RUBBERBAND_BUFFER = 80;
 
 const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
 
-const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 2 + 1;
+const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1;
 let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
@@ -1119,7 +1412,7 @@ const checkMinVelocity = ship => {
 
 const checkMaxVelocity = ship => {
   const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health);
-  const v = Math.hypot(ship.velX, ship.velY);
+  const v = Math.hypot(ship.velX, ship.velY) * ship.speedMul;
 
   if (v > maxvel) {
     ship.velX *= maxvel / v;
@@ -1158,34 +1451,11 @@ const getPlanetsForChunk = (cx, cy) => {
 };
 
 const getPlanets = (x, y) => {
-  const x1 = Math.floor((x - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
-  const x2 = Math.floor(x / PLANET_CHUNK_SIZE);
-  const x3 = Math.floor((x + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
-  const y1 = Math.floor((y - MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
-  const y2 = Math.floor(y / PLANET_CHUNK_SIZE);
-  const y3 = Math.floor((y + MAX_BULLET_DISTANCE) / PLANET_CHUNK_SIZE);
-  const xu = [];
-  const yu = [];
+  const x0 = Math.floor(x / PLANET_CHUNK_SIZE);
+  const y0 = Math.floor(y / PLANET_CHUNK_SIZE);
+  const xu = [x0 - 2, x0 - 1, x0, x0 + 1, x0 + 2];
+  const yu = [y0 - 2, y0 - 1, y0, y0 + 1, y0 + 2];
   let planets = [];
-  xu.push(x2);
-
-  if (x1 != x2) {
-    xu.push(x1);
-  }
-
-  if (x2 != x3) {
-    xu.push(x3);
-  }
-
-  yu.push(y2);
-
-  if (y1 != y2) {
-    yu.push(y1);
-  }
-
-  if (y2 != y3) {
-    yu.push(y3);
-  }
 
   for (const x of xu) {
     for (const y of yu) {
@@ -1197,7 +1467,12 @@ const getPlanets = (x, y) => {
 };
 
 const accel = (ship, accelTimeMs) => {
-  const accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health);
+  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health);
+
+  if (ship.speedMul !== 1) {
+    accelMul *= Math.sqrt(ship.speedMul);
+  }
+
   ship.velX += accelMul * Math.sin(-ship.orient);
   ship.velY += accelMul * Math.cos(-ship.orient);
   checkMaxVelocity(ship);
@@ -1236,8 +1511,8 @@ const gravityBullet = (bullet, planets) => {
   }
 
   const d = Math.hypot(bullet.velX, bullet.velY);
-  bullet.velX *= BULLET_VELOCITY / d;
-  bullet.velY *= BULLET_VELOCITY / d;
+  bullet.velX *= bullet.velocity / d;
+  bullet.velY *= bullet.velocity / d;
 };
 
 const gravityShip = (ship, planets) => {
@@ -1349,7 +1624,7 @@ const handleZeroEpsilon = x => {
 };
 
 const pointOrientation = (p, q, r) => {
-  return Math.sign(handleZeroEpsilon((q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1])));
+  return Math.sign(handleZeroEpsilon((p[0] - q[0]) * (r[1] - q[1]) - (p[1] - q[1]) * (r[0] - q[0])));
 };
 
 const onCollinearSegment = (p, q, r) => {
@@ -1361,12 +1636,11 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
   const o2 = pointOrientation(a1, b1, b2);
   const o3 = pointOrientation(a2, b2, a1);
   const o4 = pointOrientation(a2, b2, b1);
+  return o1 !== o2 && o3 !== o4 || o1 == 0 && onCollinearSegment(a1, a2, b1) || o2 == 0 && onCollinearSegment(a1, b2, b1) || o3 == 0 && onCollinearSegment(a2, a1, b2) || o4 == 0 && onCollinearSegment(a2, b1, b2);
+};
 
-  if (o1 !== o2 && o3 !== o4) {
-    return true;
-  }
-
-  return o1 == 0 && onCollinearSegment(a1, a2, b1) || o2 == 0 && onCollinearSegment(a1, b2, b1) || o3 == 0 && onCollinearSegment(a2, a1, b2) || o4 == 0 && onCollinearSegment(a2, b1, b2);
+const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
+  return lineIntersectsLine(l1, l2, t1, t2) || lineIntersectsLine(l1, l2, t2, t3) || lineIntersectsLine(l1, l2, t3, t1);
 };
 
 const closestSynchroDistance = (a1, a2, b1, b2) => {
@@ -1380,10 +1654,6 @@ const closestSynchroDistance = (a1, a2, b1, b2) => {
   }
 
   return -(A * B + C * D) / (B * B + D * D);
-};
-
-const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
-  return lineIntersectsLine(l1, l2, t1, t2) || lineIntersectsLine(l1, l2, t2, t3) || lineIntersectsLine(l1, l2, t3, t1);
 };
 
 const wrapRadianAngle = angle => {
@@ -1435,7 +1705,7 @@ const getCollisionPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, 0, ship.posX, ship.posY), rotatePointOffset(s, c, +0.83, +1.25, ship.posX, ship.posY), rotatePointOffset(s, c, -0.83, +1.25, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0, +1, ship.posX, ship.posY), rotatePointOffset(s, c, +0.67, -1, ship.posX, ship.posY), rotatePointOffset(s, c, -0.67, -1, ship.posX, ship.posY)];
 };
 
 const getThrusterPoints = ship => {

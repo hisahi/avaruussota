@@ -158,6 +158,11 @@ canvas {
   position: fixed;
   pointer-events: none;
 }
+a {
+  border: dotted 1px rgba(136,136,136,0.5);
+  color: #888;
+  text-decoration: none;
+}
 .ctrlbutton {
   font-size: 3vmin;
   line-height: 25vmin;

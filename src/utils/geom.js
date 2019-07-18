@@ -20,8 +20,8 @@ const handleZeroEpsilon = (x) => {
 
 const pointOrientation = (p, q, r) => {
   return Math.sign(handleZeroEpsilon(
-    (q[1] - p[1]) * (r[0] - q[0])
-    - (q[0] - p[0]) * (r[1] - q[1])))
+    (p[0] - q[0]) * (r[1] - q[1])
+    - (p[1] - q[1]) * (r[0] - q[0])))
 }
 
 const onCollinearSegment = (p, q, r) => {
@@ -35,14 +35,17 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
   const o3 = pointOrientation(a2, b2, a1)
   const o4 = pointOrientation(a2, b2, b1)
 
-  if (o1 !== o2 && o3 !== o4) {
-    return true
-  }
-
-  return (o1 == 0 && onCollinearSegment(a1, a2, b1))
+  return (o1 !== o2 && o3 !== o4)
+    || (o1 == 0 && onCollinearSegment(a1, a2, b1))
     || (o2 == 0 && onCollinearSegment(a1, b2, b1))
     || (o3 == 0 && onCollinearSegment(a2, a1, b2))
     || (o4 == 0 && onCollinearSegment(a2, b1, b2))
+}
+
+const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
+  return lineIntersectsLine(l1, l2, t1, t2)
+    || lineIntersectsLine(l1, l2, t2, t3)
+    || lineIntersectsLine(l1, l2, t3, t1)
 }
 
 const closestSynchroDistance = (a1, a2, b1, b2) => {
@@ -54,12 +57,6 @@ const closestSynchroDistance = (a1, a2, b1, b2) => {
     return 0
   }
   return -(A * B + C * D) / (B * B + D * D)
-}
-
-const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
-  return lineIntersectsLine(l1, l2, t1, t2)
-    || lineIntersectsLine(l1, l2, t2, t3)
-    || lineIntersectsLine(l1, l2, t3, t1)
 }
 
 const wrapRadianAngle = (angle) => {
@@ -123,9 +120,9 @@ const getCollisionPoints = (ship) => {
   const c = Math.cos(ship.orient)
   
   return [
-    rotatePointOffset(s, c,  0   , 0    , ship.posX, ship.posY),
-    rotatePointOffset(s, c, +0.83, +1.25, ship.posX, ship.posY),
-    rotatePointOffset(s, c, -0.83, +1.25, ship.posX, ship.posY)
+    rotatePointOffset(s, c,  0   , +1   , ship.posX, ship.posY),
+    rotatePointOffset(s, c, +0.67, -1   , ship.posX, ship.posY),
+    rotatePointOffset(s, c, -0.67, -1   , ship.posX, ship.posY)
   ]
 }
 

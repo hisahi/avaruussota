@@ -48,13 +48,28 @@
         </p>
         set name: <input type="text" id="nick" maxlength=20 /><br />
         <br />
+        choose perk: <select id="perkselect">
+          <option value="" selected>None</option>
+          <option value="fastershots">Faster Shots</option>
+          <option value="fasterrate">Faster Firing</option>
+          <option value="healthboost">Health Boost</option>
+          <option value="movespeed">Higher Agility</option>
+          <option value="planetbouncer">Planet Shield</option>
+          <option value="fastheal">Faster Heal</option>
+          <option value="regen">Regenerator</option>
+        </select>
+        <br />
+        <br />
         <button type="button" id="btnplay">play</button>
         <br />
         <br />
         <button type="button" id="btnfs">full screen</button>
         <br />
         <br />
-        <i>v0.6.1</i>
+        <button type="button" id="btnzoom">zoom: 150%</button>
+        <br />
+        <br />
+        <i><a href="https://github.com/hisahi/avaruussota">v0.7.0</a></i>
       </div>
     </div>
     <script src="main.bundle.js"></script>
