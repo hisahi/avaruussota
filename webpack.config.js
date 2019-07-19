@@ -21,6 +21,11 @@ module.exports = {
       }
     ]
   },
+  resolve: {
+    alias: {
+      pson: 'pson/dist/PSON.js',
+    },
+  },
   stats: {
     colors: true
   },

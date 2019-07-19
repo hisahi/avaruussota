@@ -5,7 +5,25 @@
   }
   to {
     opacity: 0;
-    transform: scale(8);
+    transform: scale(12);
+  }
+}
+@keyframes powerup {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  90% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2);
   }
 }
 
@@ -33,17 +51,19 @@ canvas {
   left: 0;
   right: 0;
   bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
   text-align: center;
   font-size: 150%;
 }
 #dialogbox {
   padding: 10px;
-  display: block;
   position: relative;
   display: inline-block;
-  top: 50%;
-  transform: translateY(-50%);
   text-align: center;
+  align-self: center;
 }
 #dialogbox, #nick, #dialogbox button {
   background: #222;
@@ -69,6 +89,15 @@ canvas {
   padding: 5px;
   background: rgba(0, 0, 0, 0.25);
   color: rgba(255, 255, 255, 0.75);
+}
+#powerupstatus {
+  position: fixed;
+  top: 55px;
+  left: 5px;
+  padding: 5px;
+  background: rgba(0, 0, 0, 0.25);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 80%;
 }
 #healthbar {
   position: fixed;
@@ -111,6 +140,22 @@ canvas {
   font-size: 300%;
   font-weight: bold;
   animation: 0.8s linear 0s 1 youscored forwards;
+  position: relative;
+  top: 30%;
+}
+#powerupanimation {
+  padding: 5px;
+  display: table;
+  margin: 0 auto;
+  text-align: center;
+  background: transparent;
+  color: rgba(192, 192, 192, 0.6);
+  font-size: 300%;
+  font-weight: bold;
+  animation: 5s linear 0s 1 powerup forwards;
+  position: relative;
+  top: 40%;
+  visibility: hidden;
 }
 #onlinestatus {
   position: fixed;
@@ -189,6 +234,12 @@ a {
   bottom: 5vmin;
   right: 35vmin;
 }
+#btnconsume {
+  position: fixed;
+  bottom: 30vmin;
+  right: 20vmin;
+  display: none;
+}
 #leaderboard {
   position: fixed;
   top: 5px;
@@ -206,9 +257,20 @@ i {
   color: #888;
 }
 @media only screen and (orientation: portrait) {
+  .ctrlbutton {
+    width: 18vmin;
+    height: 18vmin;
+    border-radius: 18vmin;
+    line-height: 18vmin;
+  }
   #btnbrake {
-    bottom: 35vmin;
+    bottom: 24vmin;
     right: 5vmin;
+  }
+  #btnconsume {
+    bottom: 43vmin;
+    right: 5vmin;
+    display: none;
   }
 }
 @media only screen and (max-width: 800px) {

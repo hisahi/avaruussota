@@ -1,3 +1,5 @@
+const PSON = require('pson')
+const serial = require('./utils/serial')(PSON)
 const jwt = require('jsonwebtoken')
 const handler = require('./sockhandler')
 const physics = require('./physics')
@@ -8,12 +10,19 @@ const noop = (_) => _
 
 const onMessage = (ws, game, handle, shipId) => {
   return (msg) => {
-    if (msg.startsWith('ping')) {
-      ws.send(msg.replace('ping', 'pong'))
-    } else if (msg.includes(' ') && shipId !== null) {
-      let [token, command, ...args] = msg.split(' ')
-      args = args.join(' ')
-      const tokenId = jwt.verify(token, JWT_SECRET)
+    const obj = serial.decode(serial.recv(msg))
+    if (serial.is_ping(obj)) {
+      serial.send(ws, serial.e_pong(obj.time))
+    } else if (serial.is_join(obj)) {
+      const ship = game.newPlayer()
+      const token = jwt.sign(ship._id, JWT_SECRET)
+      game.setLastSocket(ship, ws)
+      shipId = ship._id
+      serial.send(ws, serial.e_token(token))
+      game.welcome(ship, ws)
+      game.handleNick(ship, obj.nick || '', obj.perk || '')
+    } else if (obj.token && shipId !== null) {
+      const tokenId = jwt.verify(obj.token, JWT_SECRET)
 
       if (tokenId !== shipId) {
         return
@@ -21,24 +30,16 @@ const onMessage = (ws, game, handle, shipId) => {
 
       const ship = game.getShipFromId(shipId)
       if (ship === null) {
-        return ws.send('unrecognized')
+        return serial.send(ws, serial.e_unauth())
       }
 
-      if (command == 'disconnect') {
+      if (serial.is_quit(obj)) {
         game.leavePlayer(ship)
         game.disconnectSocket(ws)
         return
       }
 
-      handle(ship, command, args)
-    } else if (msg == 'join') {
-      const ship = game.newPlayer()
-      const token = jwt.sign(ship._id, JWT_SECRET)
-      game.setLastSocket(ship, ws)
-      shipId = ship._id
-      ws.send(`your_token ${token}`)
-      ws.send(`data ${JSON.stringify([ship, [], [], 1, 75])}`)
-      game.welcome(ship, ws)
+      handle(ship, obj)
     }
   }
 }

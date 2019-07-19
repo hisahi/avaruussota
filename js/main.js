@@ -1,4 +1,6 @@
+const PSON = require('pson')
 const Cookies = require('js-cookie')
+const serial = require('../src/utils/serial')(PSON)
 const physics = require('../src/physics')
 const geom = require('../src/utils/geom')
 const chron = require('../src/utils/chron')
@@ -13,6 +15,9 @@ const TICK_MS = 1000 / tps
 const PLANET_SPIN_SPEED = 0.02
 const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0, orient: 0, speedMul: 1 }
 const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5]
+const SQRT_H = Math.sqrt(0.5)
+const MINE_X = [0, SQRT_H, 1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H]
+const MINE_Y = [1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H, 0, SQRT_H]
 
 let lcg = new LCG(0)
 let inGame = false
@@ -37,28 +42,34 @@ let lines = []
 let planets = []
 let smokes = []
 let bubbles = []
+let powerups = []
 let tpf = 1
 let planetAngle = 0
-let playerCount = 1
+let count = 1
 let leaderboard = []
 let rubber = 150
 let no_data = 0
 let pinger = null
-let planetSeed = 0
+let seed = 0
 let dialogOpacity = 0
 let damageAlpha = 0
 let damageGot = 0
 let zoom = 1
+let cursorX = -10
+let cursorY = -10
 
 let lastSmoke = {}
 
 let last_partial = null
 let send_turn = false
+let mouse_locked = false
 
 let firingInterval = 200
 
 document.getElementById('scoreanimation').style.animation = 'none'
-document.getElementById('scoreanimation').style.opacity = '0'
+document.getElementById('scoreanimation').style.visibility = 'hidden'
+document.getElementById('powerupanimation').style.animation = 'none'
+document.getElementById('powerupanimation').style.visibility = 'hidden'
 
 const isMobile = () => {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
@@ -97,7 +108,7 @@ updateZoomText()
 const showDialog = () => {
   dialogOpacity = 0
   document.getElementById('dialogbox').style.opacity = '0'
-  document.getElementById('dialog').style.display = 'block'
+  document.getElementById('dialog').style.display = 'flex'
   document.getElementById('stats').style.display = 'none'
   document.getElementById('finalscore').style.display = 'block'
   document.body.style.position = 'absolute'
@@ -126,10 +137,41 @@ const disconnect = () => {
   leaveGame()
 }
 
+const formatTime = (sec) => {
+  sec = Math.floor(sec)
+  return `${0 | (sec / 60)}:${('0' + (sec % 60)).slice(-2)}`
+}
+
+const updatePowerup = () => {
+  let resText = ''
+  if (!dead) {
+    if (self.item !== null) {
+      if (isMobile()) {
+        resText += `item: ${self.item} ([USE] to use)\n`
+      } else {
+        resText += `item: ${self.item} ([Q] to use)\n`
+      }
+    }
+    if (self.rubbership > 0) {
+      resText += `[${formatTime(self.rubbership / 1000)}] rubber ship\n`
+    }
+    if (self.overdrive > 0) {
+      resText += `[${formatTime(self.overdrive / 1000)}] overdrive\n`
+    }
+    if (self.regen > 0) {
+      resText += `[${formatTime(self.regen / 1000)}] regen\n`
+    }
+  }
+  document.getElementById('powerupstatus').textContent = resText.trim()
+  document.getElementById('btnconsume').style.display = self.item !== null ? 'block' : 'none'
+}
+
 const joinGame = () => {
   if (!inGame) {
     document.getElementById('scoreanimation').style.animation = 'none'
-    document.getElementById('scoreanimation').style.opacity = '0'
+    document.getElementById('scoreanimation').style.visibility = 'hidden'
+    document.getElementById('powerupanimation').style.animation = 'none'
+    document.getElementById('powerupanimation').style.visibility = 'hidden'
     document.getElementById('onlinestatus').textContent = 'connecting'
 
     connectTimer = setTimeout(() => disconnect(), 5000)
@@ -137,8 +179,11 @@ const joinGame = () => {
 
     document.getElementById('btnplay').blur()
     hideDialog()
+    resetJoystickCenter()
 
     lines = []
+    smokes = []
+    bubbles = []
 
     let wsproto = here.protocol.replace('http', 'ws')
     let port = here.port
@@ -149,138 +194,139 @@ const joinGame = () => {
     inGame = true
 
     ws.addEventListener('message', (e) => {
-      const msg = e.data
+      const obj = serial.decode(serial.recv(e.data))
 
-      let [cmd, ...args] = msg.split(' ')
-      args = args.join(' ')
-
-      if (cmd === 'your_token') {
+      if (serial.is_token(obj)) {
         document.getElementById('onlinestatus').textContent = 'in game'
-        token = args
-        let nick = document.getElementById('nick').value.trim()
-        const perk = document.getElementById('perkselect').value.trim()
-        if (nick.length < 1) {
-          nick = ((100000000 * Math.random()) | 0).toString()
-        } else {
-          Cookies.set('avaruuspeli-name', nick)
-        }
-        Cookies.set('avaruuspeli-perk', perk)
-        send(`nick ${JSON.stringify([nick, perk])}`)
-      } else if (cmd === 'pong') {
+        token = obj.token
+      } else if (serial.is_pong(obj)) {
         const now = performance.now()
-        document.getElementById('onlinestatus').textContent = `in game, ping: ${Math.max(now - JSON.parse(args), 0).toFixed(1)}ms`
-      } else if (cmd === 'data') {
+        document.getElementById('onlinestatus').textContent = 
+          `in game, ping: ${Math.max(now - obj.time, 0).toFixed(1)}ms`
+      } else if (serial.is_data(obj)) {
         no_data = 0
-        let obj = null
-        let addBullets = null
+        let you = null
+        let projs = null
         let oldHealth = {}
         for (const ship of ships) {
           oldHealth[ship._id] = ship.health
         }
-        [obj, ships, addBullets, playerCount, rubber, planetSeed] = JSON.parse(args)
+
+        ({ you, ships, projs, count, rubber, seed } = obj)
+        
         for (const ship of ships) {
           if (oldHealth.hasOwnProperty(ship._id) && oldHealth[ship._id] > ship.health) {
             bubbles.push({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.3 * (1 + oldHealth[ship._id] - ship.health) })
           }
         }
+
         if (self.dead) {
-          self = obj
+          self = you
           self.dead = false
           self.highAgility = document.getElementById('perkselect').value.trim() == 'movespeed'
         } else {
-          if (Math.abs(obj.posX - self.posX) > 0.3) {
-            self.posX = (self.posX + obj.posX) / 2
-            self.velX = (self.velX + obj.velX) / 2
+          if (Math.abs(you.posX - self.posX) > 0.3) {
+            self.posX = (self.posX + you.posX) / 2
+            self.velX = (self.velX + you.velX) / 2
           }
-          if (Math.abs(obj.posY - self.posY) > 0.3) {
-            self.posY = (self.posY + obj.posY) / 2
-            self.velY = (self.velY + obj.velY) / 2
+          if (Math.abs(you.posY - self.posY) > 0.3) {
+            self.posY = (self.posY + you.posY) / 2
+            self.velY = (self.velY + you.velY) / 2
           }
-          if (Math.abs(obj.velX - self.velX) > 0.2) {
-            self.velX = obj.velX
+          if (Math.abs(you.velX - self.velX) > 0.2) {
+            self.velX = you.velX
           }
-          if (Math.abs(obj.velY - self.velY) > 0.2) {
-            self.posY = obj.posY
+          if (Math.abs(you.velY - self.velY) > 0.2) {
+            self.posY = you.posY
           }
-          if (!accel && obj.accel !== null) {
+          if (!accel && you.accel !== null) {
             send_turn = true
-          } else if (accel && obj.accel === null) {
+          } else if (accel && you.accel === null) {
             send_turn = true
-          } else if (!brake && obj.brake !== null) {
+          } else if (!brake && you.brake !== null) {
             send_turn = true
-          } else if (brake && obj.brake === null) {
+          } else if (brake && you.brake === null) {
             send_turn = true
           }
           document.getElementById('yourscore').textContent 
             = document.getElementById('scoreanimation').textContent 
             = document.getElementById('finalscorenum').textContent 
-            = obj.score
-          if (obj.score > self.score) {
-            document.getElementById('scoreanimation').style.opacity = '1'
+            = you.score
+          if (you.score > self.score) {
+            document.getElementById('scoreanimation').style.visilbility = 'visible'
             document.getElementById('scoreanimation').style.animation = 'none'
             document.getElementById('scoreanimation').style.animation = ''
           }
-          self.name = obj.name
-          self.score = obj.score
-          self.dead = obj.dead
-          if (obj.health < self.health) {
-            damageAlpha = 0.8 * (self.health - obj.health)
-            damageGot = performance.now() + (self.health - obj.health) * 700
-            bubbles.push({ x: self.posX, y: self.posY, alpha: 100, radius: 0.3 * (1 + self.health - obj.health) })
+          self.name = you.name
+          self.score = you.score
+          self.dead = you.dead
+          if (you.health < self.health) {
+            damageAlpha = 0.8 * (self.health - you.health)
+            damageGot = performance.now() + (self.health - you.health) * 700
+            bubbles.push({ x: self.posX, y: self.posY, alpha: 100, radius: 0.3 * (1 + self.health - you.health) })
           }
-          self.health = obj.health
-          self.latched = obj.latched
-          self.speedMul = obj.speedMul
-          self.overdrive = obj.overdrive
+          self.health = you.health
+          self.latched = you.latched
+          self.speedMul = you.speedMul
+          self.item = you.item
+          self.regen = you.regen
+          self.overdrive = you.overdrive
+          self.rubbership = you.rubbership
         }
-        if (physics.getPlanetSeed() != planetSeed) {
-          physics.setPlanetSeed(planetSeed)
+        if (physics.getPlanetSeed() != seed) {
+          physics.setPlanetSeed(seed)
           planets = physics.getPlanets(self.posX, self.posY)
         }
-        if (addBullets.length) {
-          bullets = [...bullets, ...addBullets.filter(x => x)]
+        if (projs.length) {
+          bullets = [...bullets, ...projs.filter(x => x)]
         }
-        physics.setPlanetSeed(planetSeed)
-        document.getElementById('playerCountNum').textContent = playerCount
+        updatePowerup()
+        physics.setPlanetSeed(seed)
+        document.getElementById('playerCountNum').textContent = count
         document.getElementById('healthbarhealth').style.width = `${Math.ceil(self.health * 200)}px`
-      } else if (cmd === 'leaderboard') {
-        leaderboard = JSON.parse(args)
+      } else if (serial.is_board(obj)) {
+        leaderboard = obj.board
         drawLeaderboard()
-      } else if (cmd === 'set_orient') {
-        self.orient = parseFloat(args)
-      } else if (cmd === 'unrecognized') {
-        leaveGame()
-      } else if (cmd === 'defeated') {
+      } else if (serial.is_orient(obj)) {
+        self.orient = obj.orient
+      } else if (serial.is_unauth(obj)) {
+        disconnect()
+      } else if (serial.is_killed(obj)) {
         explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeat').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
-        document.getElementById('defeatname').innerHTML = args
-      } else if (cmd === 'defeated_collision') {
+        document.getElementById('defeatname').innerHTML = obj.ship
+      } else if (serial.is_crashed(obj)) {
         explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeatcrash').style.display = 'inline'
         document.getElementById('defeatname').style.display = 'inline'
-        document.getElementById('defeatname').innerHTML = args
-      } else if (cmd === 'defeated_planet') {
+        document.getElementById('defeatname').innerHTML = obj.ship
+      } else if (serial.is_hitpl(obj)) {
         explosion(self)
         hideLose()
         leaveGame()
         document.getElementById('defeatplanet').style.display = 'inline'
-      } else if (cmd === 'kill_ship') {
-        const matching = ships.find(ship => ship._id === args)
+      } else if (serial.is_killship(obj)) {
+        const matching = ships.find(ship => ship._id === obj.ship)
         if (matching !== null) {
           explosion(matching)
         }
-        ships = ships.filter(ship => ship._id !== args)
-      } else if (cmd === 'remove_ship') {
-        ships = ships.filter(ship => ship._id !== args)
-      } else if (cmd === 'remove_bullet') {
-        bullets = bullets.filter(bullet => bullet._id !== args)
-      } else {
-        console.log('unknown cmd', cmd)
+        ships = ships.filter(ship => ship._id !== obj.ship)
+      } else if (serial.is_killproj(obj)) {
+        bullets = bullets.filter(bullet => bullet._id !== obj.proj)
+      } else if (serial.is_minexpl(obj)) {
+        bubbles.push({ x: obj.mine.posX, y: obj.mine.posY, alpha: 100, radius: 1 })
+      } else if (serial.is_addpup(obj)) {
+        powerups.push(obj.powerup)
+        // document.getElementById('powerupanimation').style.visibility = 'visible'
+        document.getElementById('powerupanimation').style.animation = 'none'
+        document.getElementById('powerupanimation').style.animation = ''
+      } else if (serial.is_delpup(obj)) {
+        powerups = powerups.filter(powerup => powerup._id !== obj.powerup._id)
       }
     })
     
@@ -290,15 +336,23 @@ const joinGame = () => {
         clearTimeout(connectTimer)
         connectTimer = null
       }
+      let nick = document.getElementById('nick').value.trim()
+      const perk = document.getElementById('perkselect').value.trim()
+      if (nick.length < 1) {
+        nick = ((100000000 * Math.random()) | 0).toString()
+      } else {
+        Cookies.set('avaruuspeli-name', nick)
+      }
+      Cookies.set('avaruuspeli-perk', perk)
       document.getElementById('onlinestatus').textContent = 'waiting for spawn'
-      ws.send('join')
+      serial.send(ws, serial.e_join(nick, perk))
       checkSize()
       pinger = setInterval(() => {
         if (++no_data > 8 || ws == null) {
           disconnect()
           return
         }
-        ws.send('ping ' + performance.now())
+        serial.send(ws, serial.e_ping(performance.now()))
       }, 500)
     })
     
@@ -319,20 +373,18 @@ const leaveGame = () => {
   if (ws !== null) {
     ws.close()
   }
+  if (mouse_locked) {
+    document.exitPointerLock()
+  }
   token = null
   dead = self.dead = true
   ws = null
   inGame = accel = brake = turn_left = turn_right = firing = false
   damageGot = damageAlpha = 0
+  powerups = []
   document.getElementById('onlinestatus').textContent = 'offline'
   showDialog()
   checkSize()
-}
-
-const send = (msg) => {
-  if (token) {
-    ws.send(`${token} ${msg}`)
-  }
 }
 
 const makeTd = (text) => {
@@ -366,8 +418,12 @@ const serverTick = () => {
     return
   }
 
+  if (!token) {
+    return
+  }
+
   if (send_turn) {
-    send(`control ${JSON.stringify([self.orient, accel, brake, firing])}`)
+    serial.send(ws, serial.e_ctrl(token, self.orient, accel, brake, firing))
     send_turn = false
   }
   
@@ -406,7 +462,7 @@ const partialTick = (delta) => {
       self.orient -= turn_left_ramp * TURN_UNIT * tpf
       turn_left_ramp = Math.min(1, turn_left_ramp + tpf * 0.1)
       if (self.highAgility) {
-        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128
+        accelStart = chron.timeMs() / 16 + accelStart * 15 / 16
       } else {
         accelStart = chron.timeMs()
       }
@@ -415,7 +471,7 @@ const partialTick = (delta) => {
       self.orient += turn_right_ramp * TURN_UNIT * tpf
       turn_right_ramp = Math.min(1, turn_right_ramp + tpf * 0.1)
       if (self.highAgility) {
-        accelStart = chron.timeMs() / 128 + accelStart * 127 / 128
+        accelStart = chron.timeMs() / 16 + accelStart * 15 / 16
       } else {
         accelStart = chron.timeMs()
       }
@@ -432,9 +488,13 @@ const partialTick = (delta) => {
     ship.posY += tpf * ship.velY
   }
   for (const bullet of bullets) {
-    bullet.posX += tpf * bullet.velX
-    bullet.posY += tpf * bullet.velY
-    bullet.dist += tpf * bullet.velocity
+    if (bullet.type == 'bullet' || bullet.type == 'laser') {
+      bullet.posX += tpf * bullet.velX
+      bullet.posY += tpf * bullet.velY
+      bullet.dist += tpf * bullet.velocity
+    } else if (bullet.type == 'mine') {
+      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 30)
+    }
   }
   bullets = bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)
 }
@@ -481,18 +541,106 @@ const resetJoystickCenter = () => {
   applyPosition()
 }
 
-resetJoystickCenter()
+const useItem = () => {
+  if (self.item !== null) {
+    serial.send(ws, serial.e_useitem(token))
+    self.item = null
+  }
+}
+
+const tryLockMouse = (e) => {
+  if (isMobile()) {
+    return
+  }
+  cursorX = e.clientX
+  cursorY = e.clientY
+  canvas.requestPointerLock()
+}
+
+const handleMouseDown = (e) =>{
+  if (!mouse_locked && !document.hidden && !dead) {
+    tryLockMouse(e)
+  }
+  handleMouseMove(e)
+}
+
+const handleMouseUp = (e) => {
+  handleMouseMove(e)
+}
+
+const handleMouseMove = (e) => {
+  const leftButton = (e.buttons & 1) !== 0
+  const rightButton = (e.buttons & 2) !== 0
+
+  if (leftButton && !firing) {
+    firing = true
+    send_turn = true
+  } else if (!leftButton && firing) {
+    firing = false
+    send_turn = true
+  }
+
+  if (rightButton) {
+    useItem()
+  }
+
+  if (mouse_locked) {
+    cursorX += e.movementX
+    cursorY += e.movementY
+    const cx = document.body.clientWidth / 2
+    const cy = document.body.clientHeight / 2
+    const radius = Math.hypot(cursorX - cx, cursorY - cy)
+    if (!self.latched && radius > 2) {
+      self.orient = Math.atan2(cursorX - cx, cy - cursorY)
+      send_turn = true
+    }
+  }
+}
+
+document.addEventListener('pointerlockchange', () => {
+  mouse_locked = document.pointerLockElement === canvas
+})
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (e.pointerType == 'mouse') {
+    handleMouseDown(e)
+  }
+})
+
+canvas.addEventListener('mousedown', (e) => {
+  handleMouseDown(e)
+})
+
+canvas.addEventListener('pointerup', (e) => {
+  if (e.pointerType == 'mouse') {
+    handleMouseUp(e)
+  }
+})
+
+canvas.addEventListener('mouseup', (e) => {
+  handleMouseUp(e)
+})
+
+canvas.addEventListener('pointermove', (e) => {
+  if (e.pointerType == 'mouse') {
+    handleMouseMove(e)
+  }
+})
+
+canvas.addEventListener('mousemove', (e) => {
+  handleMouseMove(e)
+})
 
 jbase.addEventListener('pointerdown', (e) => {
-  jstick.style.left = e.pageX - (jstick.offsetWidth / 2) + 'px'
-  jstick.style.top = e.pageY - (jstick.offsetHeight / 2) + 'px'
+  jstick.style.left = e.clientX - (jstick.offsetWidth / 2) + 'px'
+  jstick.style.top = e.clientY - (jstick.offsetHeight / 2) + 'px'
   applyPosition()
 })
 
 jbase.addEventListener('pointermove', (e) => {
-  if (e.pressure > 0) {
-    jstick.style.left = e.pageX - (jstick.offsetWidth / 2) + 'px'
-    jstick.style.top = e.pageY - (jstick.offsetHeight / 2) + 'px'
+  if (e.pressure > 0 || e.buttons & 1) {
+    jstick.style.left = e.clientX - (jstick.offsetWidth / 2) + 'px'
+    jstick.style.top = e.clientY - (jstick.offsetHeight / 2) + 'px'
     applyPosition()
   }
 })
@@ -508,12 +656,10 @@ jstick.addEventListener('pointerout', (e) => {
 })
 
 jouter.addEventListener('pointerout', () => {
-  console.log('out')
   resetJoystickCenter()
 })
 
 jouter.addEventListener('pointerup', () => {
-  console.log('up')
   resetJoystickCenter()
 })
 
@@ -557,6 +703,15 @@ document.getElementById('btnbrake').addEventListener('pointerup', () => {
   send_turn = true
 })
 
+document.getElementById('btnconsume').addEventListener('pointerdown', () => {
+  useItem()
+})
+document.getElementById('btnconsume').addEventListener('pointerover', (e) => {
+  if (e.pressure > 0) {
+    useItem()
+  }
+})
+
 window.addEventListener('keydown', (e) => {
   if (!token || dead) {
     return
@@ -573,6 +728,8 @@ window.addEventListener('keydown', (e) => {
     turn_left = true
   } else if (e.code == 'KeyD') {
     turn_right = true
+  } else if (e.code == 'KeyQ') {
+    useItem()
   } else if (e.code == 'Space') {
     firing = true
     send_turn = true
@@ -620,7 +777,7 @@ window.addEventListener('blur', () => {
 }, true)
 
 window.addEventListener('beforeupload', () => {
-  send('disconnect')
+  serial.send(ws, serial.e_quit(token))
 }, true)
 
 const drawShip = (ship, scale) => {
@@ -694,7 +851,7 @@ const drawShip = (ship, scale) => {
     ctx.stroke()
   }
 
-  ctx.font = '18px monospace'
+  ctx.font = `${18 * window.devicePixelRatio}px monospace`
   ctx.fillStyle = 'rgba(255,255,255,0.75)'
   ctx.textAlign = 'center'
   ctx.fillText(ship.name, x0, y0 - 2.75 * scale)
@@ -707,10 +864,32 @@ const drawBullet = (bullet, scale) => {
   const x = cx + (self.posX - bullet.posX) * scale
   const y = cy + (self.posY - bullet.posY) * scale
 
-  ctx.fillStyle = '#fff'
-  ctx.beginPath()
-  ctx.arc(x, y, 0.2 * scale, 0, 2 * Math.PI)
-  ctx.fill()
+  ctx.lineWidth = 1 * window.devicePixelRatio
+  if (bullet.type === 'bullet') {
+    ctx.fillStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(x, y, 0.2 * scale, 0, 2 * Math.PI)
+    ctx.fill()
+  } else if (bullet.type === 'laser') {
+    ctx.strokeStyle = '#fff'
+    const x1 = cx + (self.posX - (bullet.posX + bullet.velX)) * scale
+    const y1 = cy + (self.posY - (bullet.posY + bullet.velY)) * scale
+    ctx.beginPath()
+    ctx.moveTo(x, y)
+    ctx.lineTo(x1, y1)
+    ctx.stroke()
+  } else if (bullet.type === 'mine') {
+    ctx.strokeStyle = '#fff'
+    ctx.beginPath()
+    ctx.arc(x, y, 0.8 * scale, 0, 2 * Math.PI)
+    for (let i = 0; i < 8; ++i) {
+      const xo = scale * 0.8 * MINE_X[i]
+      const yo = scale * 0.8 * MINE_Y[i]
+      ctx.moveTo(x + 0.7 * xo, y + 0.7 * yo)
+      ctx.lineTo(x + 1.3 * xo, y + 1.3 * yo)
+    }
+    ctx.stroke()
+  }
 }
 
 const drawLine = (line, scale) => {
@@ -728,6 +907,26 @@ const drawLine = (line, scale) => {
   ctx.moveTo(x1, y1)
   ctx.lineTo(x2, y2)
   ctx.stroke()
+}
+
+const drawPowerup = (powerup, scale, color) => {
+  const cx = ctx.canvas.width / 2
+  const cy = ctx.canvas.height / 2
+
+  const { posX, posY } = powerup
+
+  const sx = cx + (self.posX - posX) * scale
+  const sy = cy + (self.posY - posY) * scale
+
+  if (sx < -20 || sy < -20 
+    || sx > ctx.canvas.width + 20 || sy > ctx.canvas.height + 20) {
+    return
+  }
+
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.arc(sx, sy, scale, 0, 2 * Math.PI)
+  ctx.fill()
 }
 
 const drawSmoke = (smoke, scale) => {
@@ -781,10 +980,10 @@ const drawPlanet = (planet, scale) => {
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
   ctx.strokeStyle = '#fff'
-  ctx.lineWidth = 1
+  ctx.lineWidth = 1 * window.devicePixelRatio
 
   lcg.reseed(planet.seed)
-  const gon = Math.abs(lcg.randomInt()) % 24 + 14
+  const gon = Math.abs(lcg.randomInt()) % 19 + 12
 
   let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * 
     (2 * (lcg.randomInt() & 1) - 1)
@@ -829,8 +1028,8 @@ const explosion = (ship) => {
 }
 
 const frame = (time) => {
-  ctx.canvas.width = window.innerWidth
-  ctx.canvas.height = window.innerHeight
+  ctx.canvas.width = window.innerWidth * window.devicePixelRatio
+  ctx.canvas.height = window.innerHeight * window.devicePixelRatio
   const cx = ctx.canvas.width / 2
   const cy = ctx.canvas.height / 2
   const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) 
@@ -854,7 +1053,7 @@ const frame = (time) => {
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height)
 
   // draw grid
-  ctx.lineWidth = 1
+  ctx.lineWidth = 1 * window.devicePixelRatio
   ctx.strokeStyle = '#333'
   for (let x = xm * unitSize; 
     x < ctx.canvas.width; 
@@ -895,7 +1094,7 @@ const frame = (time) => {
     }
 
     // draw player ship
-    ctx.lineWidth = 1.5
+    ctx.lineWidth = 1.5 * window.devicePixelRatio
     drawShip(self, unitSize)
     if (self.health < 0.75) {
       const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6)
@@ -910,7 +1109,7 @@ const frame = (time) => {
     }
 
     // draw ships
-    ctx.lineWidth = 1
+    ctx.lineWidth = 1 * window.devicePixelRatio
     for (const ship of ships) {
       drawShip(ship, unitSize)
       if (ship.health < 0.75) {
@@ -937,6 +1136,14 @@ const frame = (time) => {
     drawPlanet(planet, unitSize)
   }
 
+  const ctr = 0 | ((time % 300) / 15)
+  const alp = (time / 1000) % 1.0
+  const powerupColor = `rgba(${224+ctr},255,${192+ctr*2},${Math.max(alp, 1 - alp)})`
+  // draw powerups
+  for (const powerup of powerups) {
+    drawPowerup(powerup, unitSize, powerupColor)
+  }
+  
   // draw lines
   for (const line of lines) {
     drawLine(line, unitSize)
@@ -1003,8 +1210,8 @@ const frame = (time) => {
   }
 
   if (self.health < 0.3) {
-    document.getElementById('yourscore').style.color = (time % 1000) >= 500 ? '#f00' : '#fff'
-    document.getElementById('healthbarhealth').style.background = ((time + 250) % 1000) >= 500 ? '#800' : '#c00'
+    document.getElementById('yourscore').style.color = (time % 1000) >= 500 ? '#f88' : '#fff'
+    document.getElementById('healthbarhealth').style.background = ((time + 100) % 800) >= 400 ? '#800' : '#c00'
   } else if (self.health < 0.7) {
     document.getElementById('yourscore').style.color = '#fff'
     const t = (self.health - 0.3) / 0.4 * 204
@@ -1012,6 +1219,17 @@ const frame = (time) => {
   } else {
     document.getElementById('yourscore').style.color = '#fff'
     document.getElementById('healthbarhealth').style.background = '#ccc'
+  }
+  
+  if (mouse_locked) {
+    ctx.beginPath()
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 1 * window.devicePixelRatio
+    ctx.moveTo(cursorX - 8.5, cursorY + 0.5)
+    ctx.lineTo(cursorX + 9.5, cursorY + 0.5)
+    ctx.moveTo(cursorX + 0.5, cursorY - 8.5)
+    ctx.lineTo(cursorX + 0.5, cursorY + 9.5)
+    ctx.stroke()
   }
 
   planetAngle += PLANET_SPIN_SPEED
@@ -1029,7 +1247,7 @@ const tryReadCookies = () => {
   if (perk) {
     document.getElementById('perkselect').value = ''
     for (let i = 0; i < document.getElementById('perkselect').options.length; ++i) {
-      const option = document.getElementById('perkselect').options[i];
+      const option = document.getElementById('perkselect').options[i]
       if (option.value == perk) {
         option.selected = true
         break
@@ -1043,7 +1261,10 @@ const tryReadCookies = () => {
   }
 }
 
-document.getElementById('btnplay').addEventListener('click', () => joinGame())
+document.getElementById('btnplay').addEventListener('click', (e) => {
+  tryLockMouse(e)
+  joinGame()
+})
 document.getElementById('btnfs').addEventListener('click', () => {
   if (document.fullscreenElement) {
     document.exitFullscreen()
@@ -1059,3 +1280,4 @@ leaveGame()
 tryReadCookies()
 showDialog()
 hideLose()
+resetJoystickCenter()

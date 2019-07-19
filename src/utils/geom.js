@@ -48,6 +48,16 @@ const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
     || lineIntersectsLine(l1, l2, t3, t1)
 }
 
+const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
+  for (let i = 0; i <= 8; ++i) {
+    const s = i / 8
+    if (Math.hypot(a1[0] + s * a2[0] - x, a1[1] + s * a2[1] - y) < radius) {
+      return s
+    }
+  }
+  return Number.NaN
+}
+
 const closestSynchroDistance = (a1, a2, b1, b2) => {
   const A = a1[0] - b1[0]
   const B = (a2[0] - a1[0]) - (b2[0] - b1[0])
@@ -146,6 +156,7 @@ const getThrusterPoints = (ship) => {
 module.exports = { 
   pointInTriangle,
   lineIntersectsLine,
+  lineIntersectCircleFirstDepth,
   closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,

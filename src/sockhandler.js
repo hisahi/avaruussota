@@ -1,13 +1,15 @@
+const PSON = require('pson')
+const serial = require('./utils/serial')(PSON)
 const geom = require('./utils/geom')
 
 const handlerFactory = (game) => {
-  return (ship, cmd, args) => {
-    if (cmd == 'control') {
-      let [angle, accel, brake, firing] = JSON.parse(args)
+  return (ship, obj) => {
+    if (serial.is_ctrl(obj)) {
+      let { angle, accel, brake, firing } = obj
       angle = geom.wrapRadianAngle(angle)
       return game.handleControl(ship, angle, accel, brake, firing)
-    } else if (cmd == 'nick') {
-      return game.handleNick(ship, args)
+    } else if (serial.is_useitem(obj)) {
+      return game.handleUseItem(ship)
     }
   }
 }

@@ -1,8 +1,9 @@
 const GRAV = 6.67e-11
 const TICKS_PER_SECOND = 20
+const MS_PER_TICK = 1000 / TICKS_PER_SECOND
 const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND
 const MIN_SHIP_VELOCITY = 0.01
-const LATCH_VELOCITY = 0.2
+const LATCH_VELOCITY = 0.3
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
 const INERTIA_MUL = 1
@@ -80,8 +81,21 @@ const getPlanets = (x, y) => {
   return planets
 }
 
+const hasOverdrive = (ship) => {
+  return ship.overdrive > 0
+}
+
+const hasRubbership = (ship) => {
+  return ship.rubbership > 0
+}
+
+const hasRegen = (ship) => {
+  return ship.regen > 0
+}
+
 const accel = (ship, accelTimeMs) => {
   let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health)
+    * (hasOverdrive(ship) ? 2 : 1)
   if (ship.speedMul !== 1) {
     accelMul *= Math.sqrt(ship.speedMul)
   }
@@ -103,12 +117,16 @@ const brake = (ship) => {
 }
 
 const recoil = (ship) => {
-  ship.velX -= 0.02 * Math.sin(-ship.orient)
-  ship.velY -= 0.02 * Math.cos(-ship.orient)
+  ship.velX -= 0.017 * Math.sin(-ship.orient)
+  ship.velY -= 0.017 * Math.cos(-ship.orient)
   checkMaxVelocity(ship)
 }
 
 const gravityBullet = (bullet, planets) => {
+  if (bullet.type == 'mine') {
+    return
+  }
+
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y)
     if (d > (planet.radius + 1.2) && d < planet.radius * 3) {
@@ -169,6 +187,7 @@ const healthToVelocity = (health) => {
 module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
+  MS_PER_TICK,
   BULLET_VELOCITY,
   LATCH_VELOCITY,
   VIEW_DISTANCE,
@@ -176,6 +195,9 @@ module.exports = {
   PLANET_CHUNK_SIZE,
   DELAY_BETWEEN_BULLETS_MS,
   RUBBERBAND_BUFFER,
+  hasOverdrive,
+  hasRubbership,
+  hasRegen,
   accel,
   inertia,
   brake,
