@@ -91,7 +91,7 @@ Occasionally power-ups will spawn on the stage. They appear as green glowing
 orbs, and can be collected by either flying through them or hitting them
 with a bullet. The power-up is decided randomly on pick-up, and there are
 two principal types:
-
+    
 * consumable: you can hold at most one consumable at a time, and it is
   used by either pressing Q, the right mouse button or the USE touch button.
   the consumable is shown in the top-left powerup list.

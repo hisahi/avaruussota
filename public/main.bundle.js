@@ -650,7 +650,7 @@ const partialTick = delta => {
       bullet.posY += tpf * bullet.velY;
       bullet.dist += tpf * bullet.velocity;
     } else if (bullet.type == 'mine') {
-      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 30);
+      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 60);
     }
   }
 
@@ -1015,8 +1015,8 @@ const drawBullet = (bullet, scale) => {
     for (let i = 0; i < 8; ++i) {
       const xo = scale * 0.8 * MINE_X[i];
       const yo = scale * 0.8 * MINE_Y[i];
-      ctx.moveTo(x + 0.7 * xo, y + 0.7 * yo);
-      ctx.lineTo(x + 1.3 * xo, y + 1.3 * yo);
+      ctx.moveTo(x + 0.75 * xo, y + 0.75 * yo);
+      ctx.lineTo(x + 1.5 * xo, y + 1.5 * yo);
     }
 
     ctx.stroke();
@@ -1132,7 +1132,7 @@ const drawPlanet = (planet, scale) => {
   ctx.strokeStyle = '#fff';
   ctx.lineWidth = 1 * window.devicePixelRatio;
   lcg.reseed(planet.seed);
-  const gon = Math.abs(lcg.randomInt()) % 24 + 14;
+  const gon = Math.abs(lcg.randomInt()) % 19 + 12;
   let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * (2 * (lcg.randomInt() & 1) - 1);
   let [x, y] = computePlanetAngle(planet, angle, scale, cx, cy);
   ctx.beginPath();

@@ -885,8 +885,8 @@ const drawBullet = (bullet, scale) => {
     for (let i = 0; i < 8; ++i) {
       const xo = scale * 0.8 * MINE_X[i]
       const yo = scale * 0.8 * MINE_Y[i]
-      ctx.moveTo(x + 0.7 * xo, y + 0.7 * yo)
-      ctx.lineTo(x + 1.3 * xo, y + 1.3 * yo)
+      ctx.moveTo(x + 0.75 * xo, y + 0.75 * yo)
+      ctx.lineTo(x + 1.5 * xo, y + 1.5 * yo)
     }
     ctx.stroke()
   }

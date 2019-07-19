@@ -371,7 +371,7 @@ const gameFactory = (wss) => {
         bullet.posY = newY
         bullet.dist += mul * bullet.velocity
       } else if (bullet.type == 'mine') {
-        const r = 1.5 + Math.random() * Math.random() * 4
+        const r = 1.5 + Math.random() * Math.random() * 3.5
         const primerShip = shipList.find(ship => {
           // 1 unit = ship length from "head" to "tail"
           if (ship && !ship.dead && bullet.shooter !== ship._id &&
@@ -389,7 +389,7 @@ const gameFactory = (wss) => {
               return
             }
 
-            let damage = 1.5 - Math.sqrt(0.5 * Math.hypot(
+            let damage = 1.75 - Math.sqrt(0.5 * Math.hypot(
               ship.posX - bullet.posX, ship.posY - bullet.posY))
 
             if (damage < 0.05) {
@@ -466,7 +466,7 @@ const gameFactory = (wss) => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
-    const damage = Math.sqrt(Math.hypot(dx, dy) / (physics.MAX_SHIP_VELOCITY / 4))
+    const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy) / (physics.MAX_SHIP_VELOCITY / 4))
 
     if (damage >= 0.1) {
       ship1.health -= damage * ship1.healthMul
