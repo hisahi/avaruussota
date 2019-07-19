@@ -12,4 +12,4 @@
 | 17.7. | 8    | bug fixes, performance improvements, health             |
 | 18.7. | 11   | frontend work, optimization, perks, fix spawning        |
 | 19.7. | 11   | JSON -> binary, powerups, fixes, spawn improvements     |
-| yht   | 69   |                                                         |
+| yht   | 80   |                                                         |
