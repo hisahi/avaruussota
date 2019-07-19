@@ -493,7 +493,7 @@ const partialTick = (delta) => {
       bullet.posY += tpf * bullet.velY
       bullet.dist += tpf * bullet.velocity
     } else if (bullet.type == 'mine') {
-      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 30)
+      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 60)
     }
   }
   bullets = bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)

@@ -49,6 +49,7 @@ const newBullet = () => ({
   dist: 0,                    // distance taken
   shooter: null,
   shooterName: '',
+  isHit: false,
   type: 'bullet',
   damage: 1,
 
@@ -370,24 +371,25 @@ const gameFactory = (wss) => {
         bullet.posY = newY
         bullet.dist += mul * bullet.velocity
       } else if (bullet.type == 'mine') {
+        const r = 1.5 + Math.random() * Math.random() * 4
         const primerShip = shipList.find(ship => {
           // 1 unit = ship length from "head" to "tail"
           if (ship && !ship.dead && bullet.shooter !== ship._id &&
               Math.hypot(ship.posX - bullet.posX,
-                ship.posY - bullet.posY) < 2) {
+                ship.posY - bullet.posY) < r) {
             return ship
           }
         })
 
-        if (primerShip) {
+        if (primerShip || bullet.isHit) {
           // blow up the mine
           shipList.forEach(ship => {
-            if (Math.abs(ship.posX - bullet.posX) > 5 ||
-              Math.abs(ship.posY - bullet.posY) > 5) {
+            if (Math.abs(ship.posX - bullet.posX) > 6 ||
+              Math.abs(ship.posY - bullet.posY) > 6) {
               return
             }
 
-            let damage = Math.sqrt(0.5 * Math.hypot(
+            let damage = 1.5 - Math.sqrt(0.5 * Math.hypot(
               ship.posX - bullet.posX, ship.posY - bullet.posY))
 
             if (damage < 0.05) {
@@ -411,7 +413,7 @@ const gameFactory = (wss) => {
           return
         }
 
-        bullet.dist += physics.MAX_BULLET_DISTANCE / (30 * physics.TICKS_PER_SECOND)
+        bullet.dist += physics.MAX_BULLET_DISTANCE / (60 * physics.TICKS_PER_SECOND)
       }
     })
   }
@@ -951,7 +953,7 @@ const gameFactory = (wss) => {
   const applyPerk = (ship, perk) => {
     switch (perk) {
     case 'fastershots': {
-      ship.bulletSpeedMul = 1.25
+      ship.bulletSpeedMul = 1.2
       break
     }
     case 'fasterrate': {
@@ -968,7 +970,7 @@ const gameFactory = (wss) => {
       break
     }
     case 'planetbouncer': {
-      ship.planetDamageMul = 0.6
+      ship.planetDamageMul = 0.5
       break
     }
     case 'regen': {
