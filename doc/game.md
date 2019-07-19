@@ -102,20 +102,20 @@ two principal types:
 The power-ups are:
 
 * consumable:
-  * ''laser'': shoots a fast laser beam that causes considerable damage
+  * *laser*: shoots a fast laser beam that causes considerable damage
     and passes through multiple players.
-  * ''bomb'': shoots bullets around the ship.
-  * ''mine'': drops a stationary mine that stays in the game for a whole
+  * *bomb*: shoots bullets around the ship.
+  * *mine*: drops a stationary mine that stays in the game for a whole
     minute. any ships passing too close to the mine will cause it to explode,
     causing considerable damage to any ships located nearby.
-  * ''reheal'': instantly refills the ship's shields.
-  * ''[orion]
-  (https://en.wikipedia.org/wiki/Project_Orion_(nuclear_propulsion))'': 
+  * *reheal*: instantly refills the ship's shields.
+  * *[orion](
+https://en.wikipedia.org/wiki/Project_Orion_(nuclear_propulsion))*: 
     boosts the ship to maximum velocity and shoots a volley of low-range
     low-damage bullets to behind the ship.
 * temporary:
-  * ''rubber ship'': the ship will not receive any damage from hitting
+  * *rubber ship*: the ship will not receive any damage from hitting
     planets. lasts for 30 seconds.
-  * ''regen'': the shields are slowly refilled. lasts for 10 seconds.
-  * ''overdrive'': the acceleration and the rate of fire of the ship are
+  * *regen*: the shields are slowly refilled. lasts for 10 seconds.
+  * *overdrive*: the acceleration and the rate of fire of the ship are
     greatly increased. lasts for 10 seconds.
