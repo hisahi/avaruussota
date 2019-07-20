@@ -263,12 +263,15 @@ i {
     border-radius: 18vmin;
     line-height: 18vmin;
   }
+  #btnfire {
+    bottom: 10vmin;
+  }
   #btnbrake {
-    bottom: 24vmin;
+    bottom: 29vmin;
     right: 5vmin;
   }
   #btnconsume {
-    bottom: 43vmin;
+    bottom: 48vmin;
     right: 5vmin;
     display: none;
   }
@@ -276,5 +279,9 @@ i {
 @media only screen and (max-width: 800px) {
   #stats {
     font-size: 100%;
+    user-select: none;
+  }
+  #mobilecontrols {
+    user-select: none;
   }
 }

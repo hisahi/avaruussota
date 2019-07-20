@@ -20,10 +20,10 @@ module.exports = [
 
   // bullet
   'posX', 'posY', 'velX', 'velY', 'dist', 'shooter', 'shooterName',
-  'dead', '_id',
+  'isHit', 'canPickUp', 'dead', '_id',
 
   // ship
-  'health', 'name', 'score', 'latched', 'lastFired', 'firingInterval',
+  'health', 'name', 'score', 'latched', 'fireWaitTicks', 'firingInterval',
   'bulletSpeedMul', 'speedMul', 'healthMul', 'planetDamageMul', 'highAgility',
   'absorber', 'healRate', 'rubbership', 'regen', 'overdrive'
 ]

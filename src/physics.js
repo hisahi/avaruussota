@@ -6,19 +6,21 @@ const MIN_SHIP_VELOCITY = 0.01
 const LATCH_VELOCITY = 0.3
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
+const VIEW_DISTANCE = 50
+const MAX_BULLET_DISTANCE = 70
+const RUBBERBAND_BUFFER = 80
+const MINE_LIFETIME = 120
 const INERTIA_MUL = 1
 // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
-const VIEW_DISTANCE = 50
-const MAX_BULLET_DISTANCE = 50
-const DELAY_BETWEEN_BULLETS_MS = 200
-const RUBBERBAND_BUFFER = 80
+
 const LCG = require('./utils/lcg')
 const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1
+const lcg = new LCG(0)
 
 let PLANET_SEED = 1340985553
 
 const getAccelMul = (accelTimeMs) => { // time in milliseconds
-  return 0.05 + 0.000025 * accelTimeMs
+  return 0.075 + 0.0000375 * accelTimeMs
 }
 
 const checkMinVelocity = (ship) => {
@@ -30,8 +32,8 @@ const checkMinVelocity = (ship) => {
 }
 
 const checkMaxVelocity = (ship) => {
-  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health)
-  const v = Math.hypot(ship.velX, ship.velY) * ship.speedMul
+  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health) * ship.speedMul
+  const v = Math.hypot(ship.velX, ship.velY)
   if (v > maxvel) {
     ship.velX *= maxvel / v
     ship.velY *= maxvel / v
@@ -53,13 +55,14 @@ const newPlanetSeed = () => {
 // planet: x, y, radius, seed
 const getPlanetsForChunk = (cx, cy) => {
   const r = PLANET_CHUNK_SIZE
-  const lcg = new LCG((PLANET_SEED ^ (cx * 1173320513) ^ (cy * 891693747)) & 0xFFFFFFFF)
   const xb = (cx + 0.5) * r
   const yb = (cy + 0.5) * r
+
+  lcg.reseed((PLANET_SEED ^ (cx * 1173320513) ^ (cy * 891693747)) & 0xFFFFFFFF)
   
   const xo = lcg.randomOffset() * (r / 4)
   const yo = lcg.randomOffset() * (r / 4)
-  const radius = (r / 24) + (r / 8) * lcg.random()
+  const radius = (r / 20) + (r / 12) * lcg.random()
   const seed = lcg.randomInt()
   return [ { x: xb + xo, y: yb + yo, radius, seed } ]
 }
@@ -129,7 +132,7 @@ const gravityBullet = (bullet, planets) => {
 
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y)
-    if (d > (planet.radius + 1.2) && d < planet.radius * 3) {
+    if (d > (planet.radius + 1) && d < 10 + planet.radius * 3) {
       const dx = planet.x - bullet.posX
       const dy = planet.y - bullet.posY
       const r2 = Math.hypot(dx, dy) ** 2
@@ -146,7 +149,8 @@ const gravityBullet = (bullet, planets) => {
 const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y)
-    if (d > (planet.radius + 1) && d < planet.radius * 3) {
+    const dv = Math.hypot(ship.velX, ship.velY)
+    if (d > (planet.radius + 1.5 + dv * 0.3) && d < 10 + planet.radius * 3) {
       const dx = planet.x - ship.posX
       const dy = planet.y - ship.posY
       const r2 = Math.hypot(dx, dy) ** 2
@@ -181,7 +185,7 @@ const rubberband = (ship, radius) => {
 }
 
 const healthToVelocity = (health) => {
-  return 0.6 + 0.4 * Math.pow(health, 1.5)
+  return 0.6 + 0.4 * health
 }
 
 module.exports = {
@@ -193,8 +197,8 @@ module.exports = {
   VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
   PLANET_CHUNK_SIZE,
-  DELAY_BETWEEN_BULLETS_MS,
   RUBBERBAND_BUFFER,
+  MINE_LIFETIME,
   hasOverdrive,
   hasRubbership,
   hasRegen,

@@ -113,7 +113,6 @@ const here = document.location;
 const tps = physics.TICKS_PER_SECOND;
 const GRID_SIZE = 10;
 const TURN_UNIT = 2 * Math.PI / tps;
-const TICK_MS = 1000 / tps;
 const PLANET_SPIN_SPEED = 0.02;
 const BASE_SELF = {
   dead: true,
@@ -128,6 +127,8 @@ const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5];
 const SQRT_H = Math.sqrt(0.5);
 const MINE_X = [0, SQRT_H, 1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H];
 const MINE_Y = [1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H, 0, SQRT_H];
+const fogCanvas = document.createElement('canvas');
+const fogCtx = fogCanvas.getContext('2d');
 let lcg = new LCG(0);
 let inGame = false;
 let ws = null;
@@ -143,6 +144,9 @@ let turn_left = false;
 let turn_right = false;
 let turn_left_ramp = 0;
 let turn_right_ramp = 0;
+let cx = 0;
+let cy = 0;
+let unitSize = 1;
 let ships = [];
 let bullets = [];
 let lines = [];
@@ -168,7 +172,6 @@ let lastSmoke = {};
 let last_partial = null;
 let send_turn = false;
 let mouse_locked = false;
-let firingInterval = 200;
 document.getElementById('scoreanimation').style.animation = 'none';
 document.getElementById('scoreanimation').style.visibility = 'hidden';
 document.getElementById('powerupanimation').style.animation = 'none';
@@ -176,6 +179,21 @@ document.getElementById('powerupanimation').style.visibility = 'hidden';
 
 const isMobile = () => {
   return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+};
+
+const drawFog = () => {
+  fogCanvas.width = ctx.canvas.width;
+  fogCanvas.height = ctx.canvas.height;
+  fogCtx.clearRect(0, 0, fogCanvas.width, fogCanvas.height);
+  const bgradient = fogCtx.createRadialGradient(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, cx, cy, (physics.VIEW_DISTANCE + 10) * unitSize);
+  bgradient.addColorStop(0, 'rgba(0,0,0,0)');
+  bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)');
+  bgradient.addColorStop(1, 'rgba(0,0,0,0.9)');
+  fogCtx.beginPath();
+  fogCtx.arc(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, 0, 2 * Math.PI);
+  fogCtx.rect(fogCtx.canvas.width, 0, -fogCtx.canvas.width, fogCtx.canvas.height);
+  fogCtx.fillStyle = bgradient;
+  fogCtx.fill();
 };
 
 if (isMobile()) {
@@ -199,6 +217,13 @@ const nextZoom = f => {
 };
 
 const checkSize = () => {
+  ctx.canvas.width = window.innerWidth * window.devicePixelRatio;
+  ctx.canvas.height = window.innerHeight * window.devicePixelRatio;
+  cx = ctx.canvas.width / 2;
+  cy = ctx.canvas.height / 2;
+  unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) / physics.VIEW_DISTANCE * (zoom / 2);
+  drawFog();
+
   if (dead) {
     document.getElementById('mobilecontrols').style.display = 'none';
   } else {
@@ -206,7 +231,7 @@ const checkSize = () => {
   }
 };
 
-document.addEventListener('resize', () => checkSize());
+window.addEventListener('resize', () => checkSize());
 checkSize();
 updateZoomText();
 
@@ -284,10 +309,8 @@ const joinGame = () => {
     document.getElementById('powerupanimation').style.visibility = 'hidden';
     document.getElementById('onlinestatus').textContent = 'connecting';
     connectTimer = setTimeout(() => disconnect(), 5000);
-    firingInterval = document.getElementById('perkselect').value.trim() == 'fasterrate' ? 150 : 200;
     document.getElementById('btnplay').blur();
     hideDialog();
-    resetJoystickCenter();
     lines = [];
     smokes = [];
     bubbles = [];
@@ -457,7 +480,7 @@ const joinGame = () => {
         bubbles.push({
           x: obj.mine.posX,
           y: obj.mine.posY,
-          alpha: 100,
+          alpha: 200,
           radius: 1
         });
       } else if (serial.is_addpup(obj)) {
@@ -490,6 +513,7 @@ const joinGame = () => {
       document.getElementById('onlinestatus').textContent = 'waiting for spawn';
       serial.send(ws, serial.e_join(nick, perk));
       checkSize();
+      resetJoystickCenter();
       pinger = setInterval(() => {
         if (++no_data > 8 || ws == null) {
           disconnect();
@@ -582,7 +606,7 @@ const serverTick = () => {
     physics.brake(self);
   }
 
-  if (firing && chron.timeMs() - self.lastFired >= firingInterval) {
+  if (firing && self.fireWaitTicks <= 0 && !self.latched) {
     physics.recoil(self);
   }
 
@@ -595,18 +619,36 @@ const serverTick = () => {
   }
 
   for (const ship of ships) {
-    physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY));
+    if (!ship.latched) {
+      physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY));
+    }
   }
 
   for (const bullet of bullets) {
-    physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+    if (bullet.type !== 'mine') {
+      physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+    }
+  }
+
+  const time = performance.now();
+
+  if (self.health < 0.3) {
+    document.getElementById('yourscore').style.color = time % 1000 >= 500 ? '#f88' : '#fff';
+    document.getElementById('healthbarhealth').style.background = (time + 100) % 800 >= 400 ? '#800' : '#c00';
+  } else if (self.health < 0.7) {
+    const t = (self.health - 0.3) / 0.4 * 204;
+    document.getElementById('yourscore').style.color = '#fff';
+    document.getElementById('healthbarhealth').style.background = `rgba(204,${t},${t})`;
+  } else {
+    document.getElementById('yourscore').style.color = '#fff';
+    document.getElementById('healthbarhealth').style.background = '#ccc';
   }
 };
 
-setInterval(serverTick, TICK_MS);
+setInterval(serverTick, physics.MS_PER_TICK);
 
 const partialTick = delta => {
-  tpf = 1.0 * delta / TICK_MS;
+  tpf = 1.0 * delta / physics.MS_PER_TICK;
 
   if (!self.latched) {
     // turning
@@ -650,7 +692,7 @@ const partialTick = delta => {
       bullet.posY += tpf * bullet.velY;
       bullet.dist += tpf * bullet.velocity;
     } else if (bullet.type == 'mine') {
-      bullet.dist += tpf / (physics.TICKS_PER_SECOND * 60);
+      bullet.dist += tpf / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
     }
   }
 
@@ -687,7 +729,12 @@ const applyPosition = () => {
   accel = willAccel;
 
   if (shouldUpdateAccelStart) {
-    accelStart = chron.timeMs();
+    if (willAccel) {
+      self.accel = accelStart = chron.timeMs();
+    } else {
+      self.accel = null;
+    }
+
     send_turn = true;
   }
 };
@@ -746,12 +793,12 @@ const handleMouseMove = e => {
   if (mouse_locked) {
     cursorX += e.movementX;
     cursorY += e.movementY;
-    const cx = document.body.clientWidth / 2;
-    const cy = document.body.clientHeight / 2;
-    const radius = Math.hypot(cursorX - cx, cursorY - cy);
+    const mcx = document.body.clientWidth / 2;
+    const mcy = document.body.clientHeight / 2;
+    const radius = Math.hypot(cursorX - mcx, mcy - cursorY);
 
     if (!self.latched && radius > 2) {
-      self.orient = Math.atan2(cursorX - cx, cy - cursorY);
+      self.orient = Math.atan2(cursorX - mcx, mcy - cursorY);
       send_turn = true;
     }
   }
@@ -765,24 +812,15 @@ canvas.addEventListener('pointerdown', e => {
     handleMouseDown(e);
   }
 });
-canvas.addEventListener('mousedown', e => {
-  handleMouseDown(e);
-});
 canvas.addEventListener('pointerup', e => {
   if (e.pointerType == 'mouse') {
     handleMouseUp(e);
   }
 });
-canvas.addEventListener('mouseup', e => {
-  handleMouseUp(e);
-});
 canvas.addEventListener('pointermove', e => {
   if (e.pointerType == 'mouse') {
     handleMouseMove(e);
   }
-});
-canvas.addEventListener('mousemove', e => {
-  handleMouseMove(e);
 });
 jbase.addEventListener('pointerdown', e => {
   jstick.style.left = e.clientX - jstick.offsetWidth / 2 + 'px';
@@ -854,6 +892,19 @@ document.getElementById('btnconsume').addEventListener('pointerover', e => {
     useItem();
   }
 });
+
+if (!window.PointerEvent) {
+  canvas.addEventListener('mousedown', e => {
+    handleMouseDown(e);
+  });
+  canvas.addEventListener('mouseup', e => {
+    handleMouseUp(e);
+  });
+  canvas.addEventListener('mousemove', e => {
+    handleMouseMove(e);
+  });
+}
+
 window.addEventListener('keydown', e => {
   if (!token || dead) {
     return;
@@ -919,53 +970,51 @@ window.addEventListener('beforeupload', () => {
   serial.send(ws, serial.e_quit(token));
 }, true);
 
-const drawShip = (ship, scale) => {
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
+const drawShip = ship => {
   const [p1, p2, p3, p4] = geom.getShipPoints(ship);
   let [x1, y1] = p1;
   let [x2, y2] = p2;
   let [x3, y3] = p3;
   let [x4, y4] = p4;
   let [x0, y0] = [0, 0];
-  x0 = cx + (self.posX - ship.posX) * scale;
-  x1 = cx + (self.posX - ship.posX + x1) * scale;
-  x2 = cx + (self.posX - ship.posX + x2) * scale;
-  x3 = cx + (self.posX - ship.posX + x3) * scale;
-  x4 = cx + (self.posX - ship.posX + x4) * scale;
-  y0 = cy + (self.posY - ship.posY) * scale;
-  y1 = cy + (self.posY - ship.posY + y1) * scale;
-  y2 = cy + (self.posY - ship.posY + y2) * scale;
-  y3 = cy + (self.posY - ship.posY + y3) * scale;
-  y4 = cy + (self.posY - ship.posY + y4) * scale;
+  x0 = cx + (self.posX - ship.posX) * unitSize;
+  x1 = cx + (self.posX - x1) * unitSize;
+  x2 = cx + (self.posX - x2) * unitSize;
+  x3 = cx + (self.posX - x3) * unitSize;
+  x4 = cx + (self.posX - x4) * unitSize;
+  y0 = cy + (self.posY - ship.posY) * unitSize;
+  y1 = cy + (self.posY - y1) * unitSize;
+  y2 = cy + (self.posY - y2) * unitSize;
+  y3 = cy + (self.posY - y3) * unitSize;
+  y4 = cy + (self.posY - y4) * unitSize;
   ctx.strokeStyle = '#fff';
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.lineTo(x3, y3);
   ctx.lineTo(x4, y4);
-  ctx.lineTo(x1, y1);
+  ctx.closePath();
   ctx.stroke();
 
-  if (ship.accel) {
+  if (ship.accel !== null) {
     const [tp1, tp2, tp3, tp4, tp5] = geom.getThrusterPoints(ship);
     let [x1, y1] = tp1;
     let [x2, y2] = tp2;
     let [x3, y3] = tp3;
     let [x4, y4] = tp4;
     let [x5, y5] = tp5;
-    let xo = (Math.random() - 0.5) * scale / 4;
-    let yo = (Math.random() - 0.5) * scale / 4;
-    x1 = cx + (self.posX - ship.posX + x1) * scale;
-    x2 = cx + (self.posX - ship.posX + x2) * scale;
-    x3 = cx + (self.posX - ship.posX + x3) * scale;
-    x4 = cx + (self.posX - ship.posX + x4) * scale;
-    x5 = cx + (self.posX - ship.posX + x5) * scale;
-    y1 = cy + (self.posY - ship.posY + y1) * scale;
-    y2 = cy + (self.posY - ship.posY + y2) * scale;
-    y3 = cy + (self.posY - ship.posY + y3) * scale;
-    y4 = cy + (self.posY - ship.posY + y4) * scale;
-    y5 = cy + (self.posY - ship.posY + y5) * scale;
+    let xo = (Math.random() - 0.5) * unitSize / 2;
+    let yo = (Math.random() - 0.5) * unitSize / 2;
+    x1 = cx + (self.posX - x1) * unitSize;
+    x2 = cx + (self.posX - x2) * unitSize;
+    x3 = cx + (self.posX - x3) * unitSize;
+    x4 = cx + (self.posX - x4) * unitSize;
+    x5 = cx + (self.posX - x5) * unitSize;
+    y1 = cy + (self.posY - y1) * unitSize;
+    y2 = cy + (self.posY - y2) * unitSize;
+    y3 = cy + (self.posY - y3) * unitSize;
+    y4 = cy + (self.posY - y4) * unitSize;
+    y5 = cy + (self.posY - y5) * unitSize;
     x3 += xo;
     y3 += yo;
     x5 += xo / 2;
@@ -978,52 +1027,45 @@ const drawShip = (ship, scale) => {
     ctx.lineTo(x4, y4);
     ctx.lineTo(x1, y1);
     ctx.lineTo(x5, y5);
+    ctx.closePath();
     ctx.stroke();
   }
 
   ctx.font = `${18 * window.devicePixelRatio}px monospace`;
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
   ctx.textAlign = 'center';
-  ctx.fillText(ship.name, x0, y0 - 2.75 * scale);
+  ctx.fillText(ship.name, x0, y0 - 3.75 * unitSize);
 };
 
-const drawBullet = (bullet, scale) => {
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  const x = cx + (self.posX - bullet.posX) * scale;
-  const y = cy + (self.posY - bullet.posY) * scale;
+const drawBullet = bullet => {
+  const x = cx + (self.posX - bullet.posX) * unitSize;
+  const y = cy + (self.posY - bullet.posY) * unitSize;
   ctx.lineWidth = 1 * window.devicePixelRatio;
 
   if (bullet.type === 'bullet') {
-    ctx.fillStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(x, y, 0.2 * scale, 0, 2 * Math.PI);
-    ctx.fill();
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, 0.3 * unitSize, 0, 2 * Math.PI);
   } else if (bullet.type === 'laser') {
-    ctx.strokeStyle = '#fff';
-    const x1 = cx + (self.posX - (bullet.posX + bullet.velX)) * scale;
-    const y1 = cy + (self.posY - (bullet.posY + bullet.velY)) * scale;
-    ctx.beginPath();
+    const x1 = cx + (self.posX - (bullet.posX + bullet.velX)) * unitSize;
+    const y1 = cy + (self.posY - (bullet.posY + bullet.velY)) * unitSize;
     ctx.moveTo(x, y);
     ctx.lineTo(x1, y1);
-    ctx.stroke();
   } else if (bullet.type === 'mine') {
-    ctx.strokeStyle = '#fff';
-    ctx.beginPath();
-    ctx.arc(x, y, 0.8 * scale, 0, 2 * Math.PI);
+    ctx.moveTo(x, y);
+    ctx.arc(x, y, 1.6 * unitSize, 0, 2 * Math.PI);
 
     for (let i = 0; i < 8; ++i) {
-      const xo = scale * 0.8 * MINE_X[i];
-      const yo = scale * 0.8 * MINE_Y[i];
-      ctx.moveTo(x + 0.75 * xo, y + 0.75 * yo);
-      ctx.lineTo(x + 1.5 * xo, y + 1.5 * yo);
+      const xo = unitSize * 0.8 * MINE_X[i];
+      const yo = unitSize * 0.8 * MINE_Y[i];
+      ctx.moveTo(x + 2 * xo, y + 2 * yo);
+      ctx.lineTo(x + 3 * xo, y + 3 * yo);
     }
 
-    ctx.stroke();
+    ctx.moveTo(x, y);
   }
 };
 
-const drawLine = (line, scale) => {
+const drawLine = line => {
   const {
     x,
     y,
@@ -1031,12 +1073,10 @@ const drawLine = (line, scale) => {
     r,
     alpha
   } = line;
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  const x1 = cx + scale * (x + self.posX - line.xr - r * Math.cos(angle));
-  const y1 = cy + scale * (y + self.posY - line.yr - r * Math.sin(angle));
-  const x2 = cx + scale * (x + self.posX - line.xr + r * Math.cos(angle));
-  const y2 = cy + scale * (y + self.posY - line.yr + r * Math.sin(angle));
+  const x1 = cx + unitSize * (self.posX - x - r * Math.cos(angle));
+  const y1 = cy + unitSize * (self.posY - y - r * Math.sin(angle));
+  const x2 = cx + unitSize * (self.posX - x + r * Math.cos(angle));
+  const y2 = cy + unitSize * (self.posY - y + r * Math.sin(angle));
   ctx.strokeStyle = `rgba(192,192,192,${alpha * 0.01})`;
   ctx.beginPath();
   ctx.moveTo(x1, y1);
@@ -1044,15 +1084,13 @@ const drawLine = (line, scale) => {
   ctx.stroke();
 };
 
-const drawPowerup = (powerup, scale, color) => {
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
+const drawPowerup = (powerup, color) => {
   const {
     posX,
     posY
   } = powerup;
-  const sx = cx + (self.posX - posX) * scale;
-  const sy = cy + (self.posY - posY) * scale;
+  const sx = cx + (self.posX - posX) * unitSize;
+  const sy = cy + (self.posY - posY) * unitSize;
 
   if (sx < -20 || sy < -20 || sx > ctx.canvas.width + 20 || sy > ctx.canvas.height + 20) {
     return;
@@ -1060,57 +1098,78 @@ const drawPowerup = (powerup, scale, color) => {
 
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(sx, sy, scale, 0, 2 * Math.PI);
+  ctx.arc(sx, sy, unitSize, 0, 2 * Math.PI);
   ctx.fill();
 };
 
-const drawSmoke = (smoke, scale) => {
+const drawSmoke = smoke => {
   const {
     x,
     y,
     radius,
     alpha
   } = smoke;
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  const sx = cx + (self.posX - x) * scale;
-  const sy = cy + (self.posY - y) * scale;
+  const sx = cx + (self.posX - x) * unitSize;
+  const sy = cy + (self.posY - y) * unitSize;
   ctx.fillStyle = `rgba(92,92,92,${alpha * 0.01})`;
   ctx.beginPath();
-  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI);
+  ctx.arc(sx, sy, radius * unitSize, 0, 2 * Math.PI);
   ctx.fill();
 };
 
-const drawBubble = (bubble, scale) => {
+const drawBubble = bubble => {
   const {
     x,
     y,
     radius,
     alpha
   } = bubble;
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  const sx = cx + (self.posX - x) * scale;
-  const sy = cy + (self.posY - y) * scale;
-  ctx.strokeStyle = `rgba(128,128,128,${alpha * 0.01})`;
+  const sx = cx + (self.posX - x) * unitSize;
+  const sy = cy + (self.posY - y) * unitSize;
+  ctx.lineWidth = window.devicePixelRatio * (1 + Math.max(0, alpha - 1));
+  ctx.strokeStyle = `rgba(128,128,128,${Math.min(1, alpha) * 0.01})`;
   ctx.beginPath();
-  ctx.arc(sx, sy, radius * scale, 0, 2 * Math.PI);
+  ctx.arc(sx, sy, radius * unitSize, 0, 2 * Math.PI);
   ctx.stroke();
 };
 
-const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
+const computePlanetAngle = (radius, sx, sy, angle) => {
+  return [sx + Math.sin(angle) * radius * unitSize, sy + Math.cos(angle) * radius * unitSize];
+};
+
+const drawPlanet = planet => {
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1 * window.devicePixelRatio;
+  const sx = cx + (self.posX - planet.x) * unitSize;
+  const sy = cy + (self.posY - planet.y) * unitSize;
+
+  if (sx < -planet.radius * unitSize || sy < -planet.radius * unitSize || sx > ctx.canvas.width + planet.radius * unitSize || sy > ctx.canvas.height + planet.radius * unitSize) {
+    return;
+  }
+
+  lcg.reseed(planet.seed);
+  const gon = Math.abs(lcg.randomInt()) % 19 + 12;
+  let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * lcg.randomSign();
+  let [x, y] = computePlanetAngle(planet.radius, sx, sy, angle);
+  let fac = 2 * Math.PI / gon;
+  ctx.moveTo(x, y);
+
+  for (let i = 0; i <= gon; ++i) {
+    [x, y] = computePlanetAngle(planet.radius, sx, sy, angle + i * fac);
+    ctx.lineTo(x, y);
+  }
+};
+
+const createLine = (x1, y1, x2, y2, xv, yv) => {
   const [x, y] = [(x1 + x2) / 2, (y1 + y2) / 2];
   const angle = Math.atan2(x2 - x1, y2 - y1);
   const r = Math.hypot(x2 - x1, y2 - y1) / 2;
-  const vx = -0.05 + 0.1 * Math.random() - xv * tpf;
-  const vy = -0.05 + 0.1 * Math.random() - yv * tpf;
-  const vangle = -0.1 + 0.2 * Math.random(); // x, y, xr, yr, angle, r, alpha, vx, vy, vangle
-
+  const vx = -0.05 + 0.1 * Math.random() + xv * tpf;
+  const vy = -0.05 + 0.1 * Math.random() + yv * tpf;
+  const vangle = -0.1 + 0.2 * Math.random();
   return {
     x,
     y,
-    xr,
-    yr,
     angle,
     alpha: 100,
     r,
@@ -1118,33 +1177,6 @@ const createLine = (x1, y1, x2, y2, xr, yr, xv, yv) => {
     vy,
     vangle
   };
-};
-
-const computePlanetAngle = (planet, angle, scale, cx, cy) => {
-  const x = planet.x + Math.sin(angle) * planet.radius;
-  const y = planet.y + Math.cos(angle) * planet.radius;
-  return [cx + (self.posX - x) * scale, cy + (self.posY - y) * scale];
-};
-
-const drawPlanet = (planet, scale) => {
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1 * window.devicePixelRatio;
-  lcg.reseed(planet.seed);
-  const gon = Math.abs(lcg.randomInt()) % 19 + 12;
-  let angle = lcg.randomOffset() * Math.PI * 2 + planetAngle * (2 * (lcg.randomInt() & 1) - 1);
-  let [x, y] = computePlanetAngle(planet, angle, scale, cx, cy);
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-
-  for (let i = 0; i < gon; ++i) {
-    angle += 2 * Math.PI / gon;
-    [x, y] = computePlanetAngle(planet, angle, scale, cx, cy);
-    ctx.lineTo(x, y);
-  }
-
-  ctx.stroke();
 };
 
 const explosion = ship => {
@@ -1159,20 +1191,15 @@ const explosion = ship => {
   let [x4, y4] = p4;
   let [x5, y5] = [(x1 + x2) / 2, (y1 + y2) / 2];
   let [x6, y6] = [(x1 + x4) / 2, (y1 + y4) / 2];
-  lines.push(createLine(x1, y1, x5, y5, ship.posX, ship.posY, ship.velX, ship.velY));
-  lines.push(createLine(x5, y5, x2, y2, ship.posX, ship.posY, ship.velX, ship.velY));
-  lines.push(createLine(x2, y2, x3, y3, ship.posX, ship.posY, ship.velX, ship.velY));
-  lines.push(createLine(x3, y3, x4, y4, ship.posX, ship.posY, ship.velX, ship.velY));
-  lines.push(createLine(x4, y4, x6, y6, ship.posX, ship.posY, ship.velX, ship.velY));
-  lines.push(createLine(x6, y6, x1, y1, ship.posX, ship.posY, ship.velX, ship.velY));
+  lines.push(createLine(x1, y1, x5, y5, ship.velX, ship.velY));
+  lines.push(createLine(x5, y5, x2, y2, ship.velX, ship.velY));
+  lines.push(createLine(x2, y2, x3, y3, ship.velX, ship.velY));
+  lines.push(createLine(x3, y3, x4, y4, ship.velX, ship.velY));
+  lines.push(createLine(x4, y4, x6, y6, ship.velX, ship.velY));
+  lines.push(createLine(x6, y6, x1, y1, ship.velX, ship.velY));
 };
 
 const frame = time => {
-  ctx.canvas.width = window.innerWidth * window.devicePixelRatio;
-  ctx.canvas.height = window.innerHeight * window.devicePixelRatio;
-  const cx = ctx.canvas.width / 2;
-  const cy = ctx.canvas.height / 2;
-  const unitSize = Math.min(ctx.canvas.width, ctx.canvas.height) / physics.VIEW_DISTANCE * (zoom / 2);
   let delta = 0;
 
   if (last_partial != null) {
@@ -1193,22 +1220,21 @@ const frame = time => {
 
   ctx.lineWidth = 1 * window.devicePixelRatio;
   ctx.strokeStyle = '#333';
+  ctx.beginPath();
 
   for (let x = xm * unitSize; x < ctx.canvas.width; x += GRID_SIZE * unitSize) {
-    ctx.beginPath();
     const dx = x | 0 + 0.5;
     ctx.moveTo(dx, 0);
     ctx.lineTo(dx, ctx.canvas.height);
-    ctx.stroke();
   }
 
   for (let y = ym * unitSize; y < ctx.canvas.height; y += GRID_SIZE * unitSize) {
-    ctx.beginPath();
     const dy = y | 0 + 0.5;
     ctx.moveTo(0, dy);
     ctx.lineTo(ctx.canvas.width, dy);
-    ctx.stroke();
   }
+
+  ctx.stroke();
 
   if (!self.dead) {
     // draw red mask
@@ -1225,7 +1251,7 @@ const frame = time => {
 
 
     ctx.lineWidth = 1.5 * window.devicePixelRatio;
-    drawShip(self, unitSize);
+    drawShip(self);
 
     if (self.health < 0.75) {
       const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6);
@@ -1245,7 +1271,7 @@ const frame = time => {
     ctx.lineWidth = 1 * window.devicePixelRatio;
 
     for (const ship of ships) {
-      drawShip(ship, unitSize);
+      drawShip(ship);
 
       if (ship.health < 0.75) {
         const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 6);
@@ -1260,30 +1286,40 @@ const frame = time => {
           lastSmoke[ship._id] = time;
         }
       }
-    } // draw bullets
+    }
 
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#fff';
+    ctx.beginPath(); // draw bullets
 
     for (const bullet of bullets) {
-      drawBullet(bullet, unitSize);
+      drawBullet(bullet);
     }
-  } // draw planets
 
-
-  for (const planet of planets) {
-    drawPlanet(planet, unitSize);
+    ctx.stroke();
   }
 
-  const ctr = 0 | time % 300 / 15;
-  const alp = time / 1000 % 1.0;
-  const powerupColor = `rgba(${224 + ctr},255,${192 + ctr * 2},${Math.max(alp, 1 - alp)})`; // draw powerups
+  ctx.beginPath(); // draw planets
 
-  for (const powerup of powerups) {
-    drawPowerup(powerup, unitSize, powerupColor);
+  for (const planet of planets) {
+    drawPlanet(planet);
+  }
+
+  ctx.stroke();
+
+  if (powerups.length) {
+    const ctr = 0 | time % 300 / 15;
+    const alp = time / 1000 % 1.0;
+    const powerupColor = `rgba(${224 + ctr},255,${192 + ctr * 2},${Math.max(alp, 1 - alp)})`; // draw powerups
+
+    for (const powerup of powerups) {
+      drawPowerup(powerup, powerupColor);
+    }
   } // draw lines
 
 
   for (const line of lines) {
-    drawLine(line, unitSize);
+    drawLine(line);
     line.x += line.vx;
     line.y += line.vy;
     line.angle += line.vangle;
@@ -1296,7 +1332,7 @@ const frame = time => {
   lines = lines.filter(line => line.alpha > 0); // draw smokes
 
   for (const smoke of smokes) {
-    drawSmoke(smoke, unitSize);
+    drawSmoke(smoke);
     smoke.radius += 0.015;
     smoke.alpha -= 1;
   }
@@ -1311,7 +1347,7 @@ const frame = time => {
 
 
   for (const bubble of bubbles) {
-    drawBubble(bubble, unitSize);
+    drawBubble(bubble);
     bubble.radius += 0.05;
     bubble.alpha -= 1;
   }
@@ -1319,16 +1355,7 @@ const frame = time => {
   bubbles = bubbles.filter(bubble => bubble.alpha > 0);
 
   if (!self.dead) {
-    // draw black mask
-    const bgradient = ctx.createRadialGradient(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, cx, cy, (physics.VIEW_DISTANCE + 10) * unitSize);
-    bgradient.addColorStop(0, 'rgba(0,0,0,0)');
-    bgradient.addColorStop(0.5, 'rgba(0,0,0,0.2)');
-    bgradient.addColorStop(1, 'rgba(0,0,0,0.9)');
-    ctx.beginPath();
-    ctx.arc(cx, cy, (physics.VIEW_DISTANCE - 1) * unitSize, 0, 2 * Math.PI);
-    ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
-    ctx.fillStyle = bgradient;
-    ctx.fill();
+    ctx.drawImage(fogCanvas, 0, 0);
 
     if (damageAlpha > 0) {
       ctx.beginPath();
@@ -1340,18 +1367,6 @@ const frame = time => {
         damageAlpha = Math.max(0, damageAlpha - delta / 800);
       }
     }
-  }
-
-  if (self.health < 0.3) {
-    document.getElementById('yourscore').style.color = time % 1000 >= 500 ? '#f88' : '#fff';
-    document.getElementById('healthbarhealth').style.background = (time + 100) % 800 >= 400 ? '#800' : '#c00';
-  } else if (self.health < 0.7) {
-    document.getElementById('yourscore').style.color = '#fff';
-    const t = (self.health - 0.3) / 0.4 * 204;
-    document.getElementById('healthbarhealth').style.background = `rgba(204,${t},${t})`;
-  } else {
-    document.getElementById('yourscore').style.color = '#fff';
-    document.getElementById('healthbarhealth').style.background = '#ccc';
   }
 
   if (mouse_locked) {
@@ -1417,7 +1432,6 @@ leaveGame();
 tryReadCookies();
 showDialog();
 hideLose();
-resetJoystickCenter();
 
 /***/ }),
 
@@ -11338,21 +11352,21 @@ const MIN_SHIP_VELOCITY = 0.01;
 const LATCH_VELOCITY = 0.3;
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
-const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
-
 const VIEW_DISTANCE = 50;
-const MAX_BULLET_DISTANCE = 50;
-const DELAY_BETWEEN_BULLETS_MS = 200;
+const MAX_BULLET_DISTANCE = 70;
 const RUBBERBAND_BUFFER = 80;
+const MINE_LIFETIME = 120;
+const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
 const LCG = __webpack_require__(/*! ./utils/lcg */ "./src/utils/lcg.js");
 
 const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1;
+const lcg = new LCG(0);
 let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
   // time in milliseconds
-  return 0.05 + 0.000025 * accelTimeMs;
+  return 0.075 + 0.0000375 * accelTimeMs;
 };
 
 const checkMinVelocity = ship => {
@@ -11365,8 +11379,8 @@ const checkMinVelocity = ship => {
 };
 
 const checkMaxVelocity = ship => {
-  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health);
-  const v = Math.hypot(ship.velX, ship.velY) * ship.speedMul;
+  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health) * ship.speedMul;
+  const v = Math.hypot(ship.velX, ship.velY);
 
   if (v > maxvel) {
     ship.velX *= maxvel / v;
@@ -11389,12 +11403,12 @@ const newPlanetSeed = () => {
 
 const getPlanetsForChunk = (cx, cy) => {
   const r = PLANET_CHUNK_SIZE;
-  const lcg = new LCG((PLANET_SEED ^ cx * 1173320513 ^ cy * 891693747) & 0xFFFFFFFF);
   const xb = (cx + 0.5) * r;
   const yb = (cy + 0.5) * r;
+  lcg.reseed((PLANET_SEED ^ cx * 1173320513 ^ cy * 891693747) & 0xFFFFFFFF);
   const xo = lcg.randomOffset() * (r / 4);
   const yo = lcg.randomOffset() * (r / 4);
-  const radius = r / 24 + r / 8 * lcg.random();
+  const radius = r / 20 + r / 12 * lcg.random();
   const seed = lcg.randomInt();
   return [{
     x: xb + xo,
@@ -11470,7 +11484,7 @@ const gravityBullet = (bullet, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y);
 
-    if (d > planet.radius + 1.2 && d < planet.radius * 3) {
+    if (d > planet.radius + 1 && d < 10 + planet.radius * 3) {
       const dx = planet.x - bullet.posX;
       const dy = planet.y - bullet.posY;
       const r2 = Math.hypot(dx, dy) ** 2;
@@ -11488,8 +11502,9 @@ const gravityBullet = (bullet, planets) => {
 const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
+    const dv = Math.hypot(ship.velX, ship.velY);
 
-    if (d > planet.radius + 1 && d < planet.radius * 3) {
+    if (d > planet.radius + 1.5 + dv * 0.3 && d < 10 + planet.radius * 3) {
       const dx = planet.x - ship.posX;
       const dy = planet.y - ship.posY;
       const r2 = Math.hypot(dx, dy) ** 2;
@@ -11525,7 +11540,7 @@ const rubberband = (ship, radius) => {
 };
 
 const healthToVelocity = health => {
-  return 0.6 + 0.4 * Math.pow(health, 1.5);
+  return 0.6 + 0.4 * health;
 };
 
 module.exports = {
@@ -11537,8 +11552,8 @@ module.exports = {
   VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
   PLANET_CHUNK_SIZE,
-  DELAY_BETWEEN_BULLETS_MS,
   RUBBERBAND_BUFFER,
+  MINE_LIFETIME,
   hasOverdrive,
   hasRubbership,
   hasRegen,
@@ -11581,8 +11596,6 @@ module.exports = {
 /*! no static exports found */
 /***/ (function(module, exports) {
 
-const EPSILON = 1e-10;
-
 const pointInTriangle = (p1, p2, p3, p) => {
   const [x1, y1] = p1;
   const [x2, y2] = p2;
@@ -11594,24 +11607,37 @@ const pointInTriangle = (p1, p2, p3, p) => {
   return c1 > 0 && c2 > 0 && c3 > 0;
 };
 
-const handleZeroEpsilon = x => {
-  return Math.abs(x) < EPSILON ? 0 : x;
+const getDirectionSign = (a, b) => {
+  let s = Math.sign(b[0] - a[0]);
+
+  if (s == 0) {
+    s = Math.sign(b[1] - a[1]);
+  }
+
+  return s;
 };
 
-const pointOrientation = (p, q, r) => {
-  return Math.sign(handleZeroEpsilon((p[0] - q[0]) * (r[1] - q[1]) - (p[1] - q[1]) * (r[0] - q[0])));
-};
-
-const onCollinearSegment = (p, q, r) => {
-  return q[0] <= Math.max(p[0], r[0]) && q[0] >= Math.min(p[0], r[0]) && q[1] <= Math.max(p[1], r[1]) && q[1] >= Math.min(p[1], r[1]);
+const collinearLinesIntersect = (a1, a2, b1, b2) => {
+  let a = 0;
+  let b = ((a2[0] - a1[0]) * (a2[0] - a1[0]) + (a2[1] - a1[1]) * (a2[1] - a1[1])) * getDirectionSign(a2, a1);
+  let c = ((b1[0] - a1[0]) * (b1[0] - a1[0]) + (b1[1] - a1[1]) * (b1[1] - a1[1])) * getDirectionSign(b1, a1);
+  let d = ((b2[0] - a1[0]) * (b2[0] - a1[0]) + (b2[1] - a1[1]) * (b2[1] - a1[1])) * getDirectionSign(b2, a1);
+  if (a >= b) [a, b] = [b, a];
+  if (c >= d) [c, d] = [d, c];
+  return b >= c && d >= a;
 };
 
 const lineIntersectsLine = (a1, a2, b1, b2) => {
-  const o1 = pointOrientation(a1, b1, a2);
-  const o2 = pointOrientation(a1, b1, b2);
-  const o3 = pointOrientation(a2, b2, a1);
-  const o4 = pointOrientation(a2, b2, b1);
-  return o1 !== o2 && o3 !== o4 || o1 == 0 && onCollinearSegment(a1, a2, b1) || o2 == 0 && onCollinearSegment(a1, b2, b1) || o3 == 0 && onCollinearSegment(a2, a1, b2) || o4 == 0 && onCollinearSegment(a2, b1, b2);
+  const d = 1 / ((a2[0] - a1[0]) * (b2[1] - b1[1]) - (a2[1] - a1[1]) * (b2[0] - b1[0]));
+
+  if (!isFinite(d)) {
+    // collinear
+    return collinearLinesIntersect(a1, a2, b1, b2);
+  }
+
+  const n = d * ((a1[1] - b1[1]) * (b2[0] - b1[0]) - (a1[0] - b1[0]) * (b2[1] - b1[1]));
+  const m = d * ((a1[1] - b1[1]) * (a2[0] - a1[0]) - (a1[0] - b1[0]) * (a2[1] - a1[1]));
+  return 0 <= n && n <= 1 && 0 <= m && m <= 1;
 };
 
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
@@ -11658,6 +11684,10 @@ const getPlanetAngleMultiplier = (orient, vel) => {
   return 1 + sc;
 };
 
+const withinBoundingSquare = (x, y, center, d) => {
+  return Math.min(Math.abs(x - center), Math.abs(y - center)) <= d;
+};
+
 const rotatePoint = (s, c, x, y) => [x * c - y * s, x * s + y * c];
 
 const rotatePointOffset = (s, c, x, y, xo, yo) => [xo + x * c - y * s, yo + x * s + y * c];
@@ -11669,20 +11699,7 @@ const getShipPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePoint(s, c, 0, -1), rotatePoint(s, c, +1, +1.5), rotatePoint(s, c, 0, +1), rotatePoint(s, c, -1, +1.5)];
-};
-
-const getOffsetShipPoints = (ship, x, y) => {
-  if (!ship) {
-    return [];
-  }
-
-  const points = getShipPoints(ship);
-  return [[points[0][0] + x, points[0][1] + y], [points[1][0] + x, points[1][1] + y], [points[2][0] + x, points[2][1] + y], [points[3][0] + x, points[3][1] + y]];
-};
-
-const getRealShipPoints = ship => {
-  return getOffsetShipPoints(ship, ship.posX, ship.posY);
+  return [rotatePointOffset(s, c, 0, +2, ship.posX, ship.posY), rotatePointOffset(s, c, +1.5, -2, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -1.25, ship.posX, ship.posY), rotatePointOffset(s, c, -1.5, -2, ship.posX, ship.posY)];
 };
 
 const getCollisionPoints = ship => {
@@ -11692,7 +11709,7 @@ const getCollisionPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, +1, ship.posX, ship.posY), rotatePointOffset(s, c, +0.67, -1, ship.posX, ship.posY), rotatePointOffset(s, c, -0.67, -1, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0, +2.6, ship.posX, ship.posY), rotatePointOffset(s, c, +1.87, -2.6, ship.posX, ship.posY), rotatePointOffset(s, c, -1.87, -2.6, ship.posX, ship.posY)];
 };
 
 const getThrusterPoints = ship => {
@@ -11702,20 +11719,20 @@ const getThrusterPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePoint(s, c, 0, +1), rotatePoint(s, c, +0.5, +1.25), rotatePoint(s, c, 0, +2.5), rotatePoint(s, c, -0.5, +1.25), rotatePoint(s, c, 0, +1.75)];
+  return [rotatePointOffset(s, c, 0, -1.25, ship.posX, ship.posY), rotatePointOffset(s, c, +0.75, -1.75, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -3.75, ship.posX, ship.posY), rotatePointOffset(s, c, -0.75, -1.75, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -2.75, ship.posX, ship.posY)];
 };
 
 module.exports = {
   pointInTriangle,
+  rotatePoint,
   lineIntersectsLine,
   lineIntersectCircleFirstDepth,
   closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,
+  withinBoundingSquare,
   getPlanetAngleMultiplier,
   getShipPoints,
-  getOffsetShipPoints,
-  getRealShipPoints,
   getCollisionPoints,
   getThrusterPoints
 };
@@ -11731,6 +11748,7 @@ module.exports = {
 
 const LCG_A = 535426113;
 const LCG_C = 2258250855;
+const SC = 2.0 ** -30;
 
 class Generator {
   constructor(seed) {
@@ -11748,17 +11766,15 @@ class Generator {
   }
 
   random() {
-    let v = this.randomInt() / 2.0 ** 32;
-
-    if (v < 0) {
-      v += 1;
-    }
-
-    return v;
+    return (this.randomInt() & 0x3FFFFFFF) * SC;
   }
 
   randomOffset() {
     return 2 * this.random() - 1;
+  }
+
+  randomSign() {
+    return 2 * (this.randomInt() & 1) - 1;
   }
 
 }
@@ -11775,8 +11791,8 @@ module.exports = Generator;
 /***/ (function(module, exports) {
 
 module.exports = ['cmd', 'token', 'you', 'ships', 'projs', 'count', 'rubber', 'angle', 'accel', 'brake', 'firing', 'board', 'ship', 'proj', 'seed', 'time', 'despawn', 'type', // bullet
-'posX', 'posY', 'velX', 'velY', 'dist', 'shooter', 'shooterName', 'dead', '_id', // ship
-'health', 'name', 'score', 'latched', 'lastFired', 'firingInterval', 'bulletSpeedMul', 'speedMul', 'healthMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'rubbership', 'regen', 'overdrive'];
+'posX', 'posY', 'velX', 'velY', 'dist', 'shooter', 'shooterName', 'isHit', 'canPickUp', 'dead', '_id', // ship
+'health', 'name', 'score', 'latched', 'fireWaitTicks', 'firingInterval', 'bulletSpeedMul', 'speedMul', 'healthMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'rubbership', 'regen', 'overdrive'];
 
 /***/ }),
 

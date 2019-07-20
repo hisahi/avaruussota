@@ -7,6 +7,6 @@ An online multiplayer space shooter game.
 
 Verkossa toimiva monen pelaajan avaruusräiskintäpeli.
 
-* [Käyttöohje](https://github.com/hisahi/avaruussota/blob/master/doc/ohje.md)
-* Pelin ohjeet (TODO)
+* [Asennusohje](https://github.com/hisahi/avaruussota/blob/master/doc/ohje.md)
+* [Peliohje](https://github.com/hisahi/avaruussota/blob/master/doc/peli.md)
 * [Tuntikirjanpito](https://github.com/hisahi/avaruussota/blob/master/doc/tuntikirjanpito.md)

@@ -12,4 +12,5 @@
 | 17.7. | 8    | bug fixes, performance improvements, health             |
 | 18.7. | 11   | frontend work, optimization, perks, fix spawning        |
 | 19.7. | 12   | JSON -> binary, powerups, fixes, game instructions      |
-| yht   | 81   |                                                         |
+| 20.7. | 7    | optimization, algorithm fixes, Finnish game help        |
+| yht   | 88   |                                                         |

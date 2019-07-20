@@ -1,5 +1,6 @@
 const LCG_A = 535426113
 const LCG_C = 2258250855
+const SC = 2.0 ** -30
 
 class Generator {
   constructor(seed) {
@@ -17,15 +18,15 @@ class Generator {
   }
 
   random() {
-    let v = this.randomInt() / (2.0 ** 32)
-    if (v < 0) {
-      v += 1
-    }
-    return v
+    return (this.randomInt() & 0x3FFFFFFF) * SC
   }
 
   randomOffset() {
     return 2 * this.random() - 1
+  }
+
+  randomSign() {
+    return 2 * (this.randomInt() & 1) - 1
   }
 }
 

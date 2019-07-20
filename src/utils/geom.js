@@ -1,5 +1,3 @@
-const EPSILON = 1e-10
-
 const pointInTriangle = (p1, p2, p3, p) => {
   const [x1, y1] = p1
   const [x2, y2] = p2
@@ -14,32 +12,45 @@ const pointInTriangle = (p1, p2, p3, p) => {
   return c1 > 0 && c2 > 0 && c3 > 0
 }
 
-const handleZeroEpsilon = (x) => {
-  return Math.abs(x) < EPSILON ? 0 : x
+const getDirectionSign = (a, b) => {
+  let s = Math.sign(b[0] - a[0])
+  if (s == 0) {
+    s = Math.sign(b[1] - a[1])
+  }
+  return s
 }
 
-const pointOrientation = (p, q, r) => {
-  return Math.sign(handleZeroEpsilon(
-    (p[0] - q[0]) * (r[1] - q[1])
-    - (p[1] - q[1]) * (r[0] - q[0])))
-}
-
-const onCollinearSegment = (p, q, r) => {
-  return (q[0] <= Math.max(p[0], r[0])) && (q[0] >= Math.min(p[0], r[0]))
-    && (q[1] <= Math.max(p[1], r[1])) && (q[1] >= Math.min(p[1], r[1]))
+const collinearLinesIntersect = (a1, a2, b1, b2) => {
+  let a = 0
+  let b = ((a2[0] - a1[0]) * (a2[0] - a1[0]) 
+    + (a2[1] - a1[1]) * (a2[1] - a1[1])) * getDirectionSign(a2, a1)
+  let c = ((b1[0] - a1[0]) * (b1[0] - a1[0]) 
+    + (b1[1] - a1[1]) * (b1[1] - a1[1])) * getDirectionSign(b1, a1)
+  let d = ((b2[0] - a1[0]) * (b2[0] - a1[0]) 
+    + (b2[1] - a1[1]) * (b2[1] - a1[1])) * getDirectionSign(b2, a1)
+  
+  if (a >= b) [a, b] = [b, a]
+  if (c >= d) [c, d] = [d, c]
+  
+  return b >= c && d >= a
 }
 
 const lineIntersectsLine = (a1, a2, b1, b2) => {
-  const o1 = pointOrientation(a1, b1, a2)
-  const o2 = pointOrientation(a1, b1, b2)
-  const o3 = pointOrientation(a2, b2, a1)
-  const o4 = pointOrientation(a2, b2, b1)
+  const d = 1 / 
+    (((a2[0] - a1[0]) * (b2[1] - b1[1])) 
+    - ((a2[1] - a1[1]) * (b2[0] - b1[0])))
+  if (!isFinite(d)) { // collinear
+    return collinearLinesIntersect(a1, a2, b1, b2)
+  }
 
-  return (o1 !== o2 && o3 !== o4)
-    || (o1 == 0 && onCollinearSegment(a1, a2, b1))
-    || (o2 == 0 && onCollinearSegment(a1, b2, b1))
-    || (o3 == 0 && onCollinearSegment(a2, a1, b2))
-    || (o4 == 0 && onCollinearSegment(a2, b1, b2))
+  const n = d * 
+    (((a1[1] - b1[1]) * (b2[0] - b1[0])) 
+    - ((a1[0] - b1[0]) * (b2[1] - b1[1])))
+  const m = d * 
+    (((a1[1] - b1[1]) * (a2[0] - a1[0])) 
+    - ((a1[0] - b1[0]) * (a2[1] - a1[1])))
+
+  return 0 <= n && n <= 1 && 0 <= m && m <= 1
 }
 
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
@@ -82,6 +93,10 @@ const getPlanetAngleMultiplier = (orient, vel) => {
   return 1 + sc
 }
 
+const withinBoundingSquare = (x, y, center, d) => {
+  return Math.min(Math.abs(x - center), Math.abs(y - center)) <= d
+}
+
 const rotatePoint = (s, c, x, y) => [x * c - y * s, x * s + y * c]
 
 const rotatePointOffset = (s, c, x, y, xo, yo) => 
@@ -96,29 +111,11 @@ const getShipPoints = (ship) => {
   const c = Math.cos(ship.orient)
 
   return [
-    rotatePoint(s, c,  0   , -1   ),
-    rotatePoint(s, c, +1   , +1.5 ),
-    rotatePoint(s, c,  0   , +1   ),
-    rotatePoint(s, c, -1   , +1.5 )
+    rotatePointOffset(s, c,  0   , +2   , ship.posX, ship.posY),
+    rotatePointOffset(s, c, +1.5 , -2   , ship.posX, ship.posY),
+    rotatePointOffset(s, c,  0   , -1.25, ship.posX, ship.posY),
+    rotatePointOffset(s, c, -1.5 , -2   , ship.posX, ship.posY)
   ]
-}
-
-const getOffsetShipPoints = (ship, x, y) => {
-  if (!ship) {
-    return []
-  }
-
-  const points = getShipPoints(ship)
-  return [
-    [points[0][0] + x, points[0][1] + y],
-    [points[1][0] + x, points[1][1] + y],
-    [points[2][0] + x, points[2][1] + y],
-    [points[3][0] + x, points[3][1] + y]
-  ]
-}
-
-const getRealShipPoints = (ship) => {
-  return getOffsetShipPoints(ship, ship.posX, ship.posY)
 }
 
 const getCollisionPoints = (ship) => {
@@ -130,9 +127,9 @@ const getCollisionPoints = (ship) => {
   const c = Math.cos(ship.orient)
   
   return [
-    rotatePointOffset(s, c,  0   , +1   , ship.posX, ship.posY),
-    rotatePointOffset(s, c, +0.67, -1   , ship.posX, ship.posY),
-    rotatePointOffset(s, c, -0.67, -1   , ship.posX, ship.posY)
+    rotatePointOffset(s, c,  0   , +2.6, ship.posX, ship.posY),
+    rotatePointOffset(s, c, +1.87, -2.6, ship.posX, ship.posY),
+    rotatePointOffset(s, c, -1.87, -2.6, ship.posX, ship.posY)
   ]
 }
 
@@ -145,24 +142,24 @@ const getThrusterPoints = (ship) => {
   const c = Math.cos(ship.orient)
 
   return [
-    rotatePoint(s, c,  0   , +1   ),
-    rotatePoint(s, c, +0.5 , +1.25),
-    rotatePoint(s, c,  0   , +2.5 ),
-    rotatePoint(s, c, -0.5 , +1.25),
-    rotatePoint(s, c,  0   , +1.75),
+    rotatePointOffset(s, c,  0   , -1.25, ship.posX, ship.posY),
+    rotatePointOffset(s, c, +0.75, -1.75, ship.posX, ship.posY),
+    rotatePointOffset(s, c,  0   , -3.75, ship.posX, ship.posY),
+    rotatePointOffset(s, c, -0.75, -1.75, ship.posX, ship.posY),
+    rotatePointOffset(s, c,  0   , -2.75, ship.posX, ship.posY),
   ]
 }
 
 module.exports = { 
   pointInTriangle,
+  rotatePoint,
   lineIntersectsLine,
   lineIntersectCircleFirstDepth,
   closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,
+  withinBoundingSquare,
   getPlanetAngleMultiplier,
   getShipPoints,
-  getOffsetShipPoints,
-  getRealShipPoints,
   getCollisionPoints,
   getThrusterPoints }
