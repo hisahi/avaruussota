@@ -20,7 +20,7 @@ const lcg = new LCG(0)
 let PLANET_SEED = 1340985553
 
 const getAccelMul = (accelTimeMs) => { // time in milliseconds
-  return 0.075 + 0.0000375 * accelTimeMs
+  return 0.0875 + 0.000025 * accelTimeMs
 }
 
 const checkMinVelocity = (ship) => {

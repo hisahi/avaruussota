@@ -123,7 +123,7 @@ const BASE_SELF = {
   orient: 0,
   speedMul: 1
 };
-const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5];
+const ZOOM_LEVELS = [1.0, 1.5, 2.0];
 const SQRT_H = Math.sqrt(0.5);
 const MINE_X = [0, SQRT_H, 1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H];
 const MINE_Y = [1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H, 0, SQRT_H];
@@ -196,12 +196,9 @@ const drawFog = () => {
   fogCtx.fill();
 };
 
-if (isMobile()) {
-  zoom = 1.5;
-}
-
 const updateZoomText = () => {
   document.getElementById('btnzoom').textContent = `zoom: ${zoom * 100 | 0}%`;
+  checkSize();
 };
 
 const nextZoom = f => {
@@ -489,7 +486,7 @@ const joinGame = () => {
         document.getElementById('powerupanimation').style.animation = 'none';
         document.getElementById('powerupanimation').style.animation = '';
       } else if (serial.is_delpup(obj)) {
-        powerups = powerups.filter(powerup => powerup._id !== obj.powerup._id);
+        powerups = powerups.filter(powerup => powerup._id !== obj.powerup);
       }
     });
     ws.addEventListener('open', () => {
@@ -11366,7 +11363,7 @@ let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
   // time in milliseconds
-  return 0.075 + 0.0000375 * accelTimeMs;
+  return 0.0875 + 0.000025 * accelTimeMs;
 };
 
 const checkMinVelocity = ship => {
@@ -11790,7 +11787,7 @@ module.exports = Generator;
 /*! no static exports found */
 /***/ (function(module, exports) {
 
-module.exports = ['cmd', 'token', 'you', 'ships', 'projs', 'count', 'rubber', 'angle', 'accel', 'brake', 'firing', 'board', 'ship', 'proj', 'seed', 'time', 'despawn', 'type', // bullet
+module.exports = ['cmd', 'token', 'you', 'ships', 'projs', 'count', 'rubber', 'angle', 'accel', 'brake', 'firing', 'board', 'ship', 'proj', 'seed', 'time', 'despawn', 'type', 'rock', // bullet
 'posX', 'posY', 'velX', 'velY', 'dist', 'shooter', 'shooterName', 'isHit', 'canPickUp', 'dead', '_id', // ship
 'health', 'name', 'score', 'latched', 'fireWaitTicks', 'firingInterval', 'bulletSpeedMul', 'speedMul', 'healthMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'rubbership', 'regen', 'overdrive'];
 
@@ -11904,9 +11901,19 @@ module.exports = PSON => {
     powerup: powerup
   });
 
-  const e_delpup = powerup => encode({
+  const e_delpup = id => encode({
     cmd: 'delpup',
-    powerup: powerup
+    powerup: id
+  });
+
+  const e_addrock = rock => encode({
+    cmd: 'addrock',
+    rock: rock
+  });
+
+  const e_delrock = id => encode({
+    cmd: 'delrock',
+    rock: id
   });
 
   const e_useitem = token => encode({
@@ -11953,6 +11960,10 @@ module.exports = PSON => {
 
   const is_delpup = obj => obj.cmd == 'delpup';
 
+  const is_addrock = obj => obj.cmd == 'addrock';
+
+  const is_delrock = obj => obj.cmd == 'delrock';
+
   const is_useitem = obj => obj.cmd == 'useitem';
 
   const is_minexpl = obj => obj.cmd == 'minexpl';
@@ -11979,6 +11990,8 @@ module.exports = PSON => {
     e_quit,
     e_addpup,
     e_delpup,
+    e_addrock,
+    e_delrock,
     e_useitem,
     e_minexpl,
     is_ctrl,
@@ -11998,6 +12011,8 @@ module.exports = PSON => {
     is_unauth,
     is_addpup,
     is_delpup,
+    is_addrock,
+    is_delrock,
     is_useitem,
     is_minexpl
   };

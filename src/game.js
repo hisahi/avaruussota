@@ -833,7 +833,7 @@ const gameFactory = (wss) => {
 
   const removePowerup = (powerup) => {
     delete powerups[powerup._id]
-    announce(serial.e_delpup(powerup))
+    announce(serial.e_delpup(powerup._id))
   }
 
   const updatePowerups = () => {

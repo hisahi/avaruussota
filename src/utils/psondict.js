@@ -17,6 +17,7 @@ module.exports = [
   'time',
   'despawn',
   'type',
+  'rock',
 
   // bullet
   'posX', 'posY', 'velX', 'velY', 'dist', 'shooter', 'shooterName',

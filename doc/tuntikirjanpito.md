@@ -13,4 +13,5 @@
 | 18.7. | 11   | frontend work, optimization, perks, fix spawning        |
 | 19.7. | 12   | JSON -> binary, powerups, fixes, game instructions      |
 | 20.7. | 7    | optimization, algorithm fixes, Finnish game help        |
-| yht   | 88   |                                                         |
+| 28.7. | 1    | koodin siivoamista ja tarkistamista                     |
+| yht   | 89   |                                                         |

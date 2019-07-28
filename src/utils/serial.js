@@ -30,7 +30,9 @@ module.exports = (PSON) => {
     cmd: 'ctrl', token: token, angle: orient, 
     accel: accel, brake: brake, firing: firing })
   const e_addpup = (powerup) => encode({ cmd: 'addpup', powerup: powerup })
-  const e_delpup = (powerup) => encode({ cmd: 'delpup', powerup: powerup })
+  const e_delpup = (id) => encode({ cmd: 'delpup', powerup: id })
+  const e_addrock = (rock) => encode({ cmd: 'addrock', rock: rock })
+  const e_delrock = (id) => encode({ cmd: 'delrock', rock: id })
   const e_useitem = (token) => encode({ cmd: 'useitem', token: token })
   const e_minexpl = (mine) => encode({ cmd: 'minexpl', proj: mine })
 
@@ -51,6 +53,8 @@ module.exports = (PSON) => {
   const is_unauth = (obj) => obj.cmd == 'unauth'
   const is_addpup = (obj) => obj.cmd == 'addpup'
   const is_delpup = (obj) => obj.cmd == 'delpup'
+  const is_addrock = (obj) => obj.cmd == 'addrock'
+  const is_delrock = (obj) => obj.cmd == 'delrock'
   const is_useitem = (obj) => obj.cmd == 'useitem'
   const is_minexpl = (obj) => obj.cmd == 'minexpl'
   
@@ -77,6 +81,8 @@ module.exports = (PSON) => {
     e_quit,
     e_addpup,
     e_delpup,
+    e_addrock,
+    e_delrock,
     e_useitem,
     e_minexpl,
 
@@ -97,6 +103,8 @@ module.exports = (PSON) => {
     is_unauth,
     is_addpup,
     is_delpup,
+    is_addrock,
+    is_delrock,
     is_useitem,
     is_minexpl
   }

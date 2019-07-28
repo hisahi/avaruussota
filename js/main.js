@@ -13,7 +13,7 @@ const GRID_SIZE = 10
 const TURN_UNIT = 2 * Math.PI / tps
 const PLANET_SPIN_SPEED = 0.02
 const BASE_SELF = { dead: true, posX: 0, posY: 0, velX: 0, velY: 0, orient: 0, speedMul: 1 }
-const ZOOM_LEVELS = [1.0, 1.5, 2.0, 2.5]
+const ZOOM_LEVELS = [1.0, 1.5, 2.0]
 const SQRT_H = Math.sqrt(0.5)
 const MINE_X = [0, SQRT_H, 1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H]
 const MINE_Y = [1, SQRT_H, 0, -SQRT_H, -1, -SQRT_H, 0, SQRT_H]
@@ -97,13 +97,9 @@ const drawFog = () => {
   fogCtx.fillStyle = bgradient
   fogCtx.fill()
 }
-
-if (isMobile()) {
-  zoom = 1.5
-}
-
 const updateZoomText = () => {
   document.getElementById('btnzoom').textContent = `zoom: ${(zoom * 100) | 0}%`
+  checkSize()
 }
 
 const nextZoom = (f) => {
@@ -355,7 +351,7 @@ const joinGame = () => {
         document.getElementById('powerupanimation').style.animation = 'none'
         document.getElementById('powerupanimation').style.animation = ''
       } else if (serial.is_delpup(obj)) {
-        powerups = powerups.filter(powerup => powerup._id !== obj.powerup._id)
+        powerups = powerups.filter(powerup => powerup._id !== obj.powerup)
       }
     })
     
