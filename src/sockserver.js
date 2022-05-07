@@ -1,8 +1,8 @@
-const PSON = require('pson')
-const serial = require('./utils/serial')(PSON)
+const serial = require('./utils/serial')
 const jwt = require('jsonwebtoken')
 const handler = require('./sockhandler')
-const physics = require('./physics')
+const physics = require('./game/physics')
+const gameFactory = require('./game')
 
 const JWT_SECRET = process.env.JWT_SECRET || ''
 
@@ -28,8 +28,8 @@ const onMessage = (ws, game, handle, shipId) => {
         return
       }
 
-      const ship = game.getShipFromId(shipId)
-      if (ship === null) {
+      const ship = game.getShipById(shipId)
+      if (ship === null || ship === undefined) {
         return serial.send(ws, serial.e_unauth())
       }
 
@@ -45,7 +45,7 @@ const onMessage = (ws, game, handle, shipId) => {
 }
 
 const onConnectFactory = (wss) => {
-  const game = require('./game')(wss)
+  const game = gameFactory(wss)
 
   setInterval(() => game.deltaTick(), 
     1000 / physics.TICKS_PER_SECOND)

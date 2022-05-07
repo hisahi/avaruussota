@@ -157,6 +157,17 @@ canvas {
   top: 40%;
   visibility: hidden;
 }
+#deathlog {
+  position: fixed;
+  bottom: calc(20px + 1em);
+  left: 5px;
+  padding: 5px;
+  display: inline-block;
+  text-align: left;
+  color: #fff;
+  opacity: 0.75;
+  font-size: 100%;
+}
 #onlinestatus {
   position: fixed;
   bottom: 5px;

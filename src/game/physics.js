@@ -9,11 +9,11 @@ const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SEC
 const VIEW_DISTANCE = 50
 const MAX_BULLET_DISTANCE = 70
 const RUBBERBAND_BUFFER = 80
-const MINE_LIFETIME = 120
+const MINE_LIFETIME = 60
 const INERTIA_MUL = 1
 // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
-const LCG = require('./utils/lcg')
+const LCG = require('../utils/lcg')
 const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1
 const lcg = new LCG(0)
 
@@ -21,6 +21,14 @@ let PLANET_SEED = 1340985553
 
 const getAccelMul = (accelTimeMs) => { // time in milliseconds
   return 0.0875 + 0.000025 * accelTimeMs
+}
+
+const onTurn = (ship, now) => {
+  if (ship.highAgility) {
+    ship.accel = now / 16 + ship.accel * 15 / 16
+  } else {
+    ship.accel = now
+  }
 }
 
 const checkMinVelocity = (ship) => {
@@ -206,6 +214,7 @@ module.exports = {
   inertia,
   brake,
   recoil,
+  onTurn,
   gravityBullet,
   gravityShip,
   rubberband,

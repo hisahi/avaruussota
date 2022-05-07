@@ -1,5 +1,4 @@
-const PSON = require('pson')
-const serial = require('./utils/serial')(PSON)
+const serial = require('./utils/serial')
 const geom = require('./utils/geom')
 
 const handlerFactory = (game) => {
