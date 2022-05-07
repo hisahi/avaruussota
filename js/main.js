@@ -46,7 +46,7 @@ const controls = require('./controls')(canvas, self, state, cursor,
   {
     useItem: () => useItem(),
     resendControls: () => resendCtrl = true,
-    tryLockMouse: () => tryLockMouse(),
+    tryLockMouse: (e) => tryLockMouse(e),
     nextZoom: () => nextZoom(),
   })
 const joystick = require('./joystick')(self, state, controls)
@@ -466,7 +466,7 @@ const frame = time => {
 window.requestAnimationFrame(frame)
 
 ui = require('./ui')({ joinGame, tryLockMouse, nextZoom })
-ui.hideLose()
 leaveGame()
 updateZoomText()
+ui.hideLose()
 tryReadCookies()

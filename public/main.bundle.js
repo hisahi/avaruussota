@@ -1027,7 +1027,7 @@ module.exports = callbacks => {
     const p = document.createElement('p');
     p.textContent = text;
     setTimeout(() => {
-      p.parentNode?.removeChild(p);
+      if (p.parentNode) p.parentNode.removeChild(p);
     }, 5000);
     deathLog.appendChild(p);
   };
@@ -3162,7 +3162,7 @@ const draw = __webpack_require__(/*! ./draw */ "./js/draw.js")(canvas, self, obj
 const controls = __webpack_require__(/*! ./controls */ "./js/controls.js")(canvas, self, state, cursor, {
   useItem: () => useItem(),
   resendControls: () => resendCtrl = true,
-  tryLockMouse: () => tryLockMouse(),
+  tryLockMouse: e => tryLockMouse(e),
   nextZoom: () => nextZoom()
 });
 
@@ -3623,9 +3623,9 @@ ui = __webpack_require__(/*! ./ui */ "./js/ui.js")({
   tryLockMouse,
   nextZoom
 });
-ui.hideLose();
 leaveGame();
 updateZoomText();
+ui.hideLose();
 tryReadCookies();
 })();
 
