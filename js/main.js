@@ -1,7 +1,6 @@
 const Cookies = require('js-cookie')
 const serial = require('../src/utils/serial')
 const physics = require('../src/game/physics')
-const chron = require('../src/utils/chron')
 const here = document.location
 const tps = physics.TICKS_PER_SECOND
 const TURN_UNIT = 2 * Math.PI / tps
@@ -28,7 +27,7 @@ let state = {
   token: null,
   mouseLocked: false
 }
-let tpf = 1
+let ticksPerFrame = 1
 
 let count = 1
 let leaderboard = []
@@ -37,7 +36,7 @@ let no_data = 0
 let pinger = null
 let seed = 0
 let zoom = 1
-let last_partial = null
+let lastPartialTick = null
 
 let resendCtrl = false
 
@@ -50,6 +49,7 @@ const controls = require('./controls')(canvas, self, state, cursor,
     nextZoom: () => nextZoom(),
   })
 const joystick = require('./joystick')(self, state, controls)
+const tick = require('./tick')(self, objects, controls)
 let ui
 
 draw.checkSize()
@@ -74,9 +74,111 @@ const nextZoom = () => {
   setZoom(ZOOM_LEVELS[indx])
 }
 
+const onConnect = () => {
+  state.dead = false
+  if (connectTimer !== null) {
+    clearTimeout(connectTimer)
+    connectTimer = null
+  }
+  let nick = document.getElementById('nick').value.trim()
+  const perk = document.getElementById('perkselect').value.trim()
+  if (nick.length < 1) {
+    nick = ((100000000 * Math.random()) | 0).toString()
+  } else {
+    Cookies.set('avaruuspeli-name', nick)
+  }
+  Cookies.set('avaruuspeli-perk', perk)
+  ui.updateOnlineStatus('waiting for spawn')
+  serial.send(ws, serial.e_join(nick, perk))
+  draw.checkSize()
+  ui.updateControls(state)
+  joystick.resetJoystickCenter()
+  pinger = setInterval(() => {
+    if (++no_data > 8 || ws == null) {
+      disconnect()
+      return
+    }
+    serial.send(ws, serial.e_ping(performance.now()))
+  }, 500)
+}
+
 const disconnect = () => {
   ui.disconnect()
   leaveGame()
+}
+
+const gotData = obj => {
+  let you = null
+  let ships = []
+  let projs = null
+  let oldHealth = {}
+  for (const ship of objects.ships) {
+    oldHealth[ship._id] = ship.health
+  }
+
+  ({ you, ships, projs, count, rubber, seed } = obj)
+  draw.setRubber(rubber)
+
+  objects.ships = ships
+
+  for (const ship of ships) {
+    if (Object.prototype.hasOwnProperty.call(oldHealth, ship._id) && oldHealth[ship._id] > ship.health) {
+      draw.addBubble({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.3 * (1 + oldHealth[ship._id] - ship.health) })
+    }
+  }
+
+  if (self.dead) {
+    Object.assign(self, you)
+    self.dead = false
+  } else {
+    // if there is a high velocity difference, average them out
+    if (Math.abs(you.posX - self.posX) > 0.3) {
+      self.posX = (self.posX + 3 * you.posX) / 4
+      self.velX = (self.velX + you.velX) / 2
+    }
+    if (Math.abs(you.posY - self.posY) > 0.3) {
+      self.posY = (self.posY + 3 * you.posY) / 4
+      self.velY = (self.velY + you.velY) / 2
+    }
+    if (Math.abs(you.velX - self.velX) > 0.2) {
+      self.velX = you.velX
+    }
+    if (Math.abs(you.velY - self.velY) > 0.2) {
+      self.posY = you.posY
+    }
+    
+    if (controls.isAccelerating() !== (you.accel !== null)
+        || controls.isBraking() !== (you.brake !== null)) {
+      resendCtrl = true
+    }
+    ui.updateScore(you.score, self.score)
+    self.name = you.name
+    self.score = you.score
+    self.dead = you.dead
+    if (you.health < self.health) {
+      draw.gotDamage(self.health - you.health)
+      draw.addBubble({ x: self.posX, y: self.posY, alpha: 100, radius: 0.3 * (1 + self.health - you.health) })
+    }
+    self.health = you.health
+    self.latched = you.latched
+    self.speedMul = you.speedMul
+    self.item = you.item
+    self.regen = you.regen
+    self.overdrive = you.overdrive
+    self.rubbership = you.rubbership
+  }
+  if (physics.getPlanetSeed() != seed) {
+    physics.setPlanetSeed(seed)
+    objects.planets = physics.getPlanets(self.posX, self.posY)
+  }
+  if (projs.length) {
+    objects.bullets = [...objects.bullets, ...projs.filter(x => x)]
+  }
+  ui.updatePowerup(self, state)
+  physics.setPlanetSeed(seed)
+  ui.updatePlayerCount(count)
+  ui.updateHealthBar(self.health)
+  ui.updateDebugInfo(self.thrustBoost.toFixed(6))
 }
 
 const joinGame = () => {
@@ -92,177 +194,116 @@ const joinGame = () => {
       port = `:${port}`
     }
     ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`)
+    ws.binaryType = 'arraybuffer'
     inGame = true
 
     ws.addEventListener('message', (e) => {
-      const obj = serial.decode(serial.recv(e.data))
+      let data = serial.recv(e.data)
+      if (data instanceof ArrayBuffer)
+        data = new Uint8Array(data)
+      const [cmd, obj] = serial.decode(data)
 
-      if (serial.is_token(obj)) {
+      switch (cmd) {
+      case serial.C_token:
         ui.updateOnlineStatus('in game')
         state.token = obj.token
+        break
 
-      } else if (serial.is_pong(obj)) {
-        const now = performance.now()
+      case serial.C_pong:
         ui.updateOnlineStatus(
-          `in game, ping: ${Math.max(now - obj.time, 0).toFixed(1)}ms`)
+          `in game, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`)
+        break
 
-      } else if (serial.is_data(obj)) {
+      case serial.C_data:
         no_data = 0
-        let you = null
-        let ships = []
-        let projs = null
-        let oldHealth = {}
-        for (const ship of objects.ships) {
-          oldHealth[ship._id] = ship.health
-        }
+        obj.you = serial.deserializeShip(obj.you)
+        obj.ships = obj.ships.map(serial.deserializeShip)
+        obj.projs = obj.projs.map(serial.deserializeBullet)
+        gotData(obj)
+        state.dead = self.dead
+        break
 
-        ({ you, ships, projs, count, rubber, seed } = obj)
-        you = serial.deserializeShip(you)
-        ships = ships.map(serial.deserializeShip)
-        projs = projs.map(serial.deserializeBullet)
-        draw.setRubber(rubber)
-
-        objects.ships = ships
-
-        for (const ship of ships) {
-          if (Object.prototype.hasOwnProperty.call(oldHealth, ship._id) && oldHealth[ship._id] > ship.health) {
-            draw.addBubble({ x: ship.posX, y: ship.posY, alpha: 100, radius: 0.3 * (1 + oldHealth[ship._id] - ship.health) })
-          }
-        }
-
-        if (self.dead) {
-          Object.assign(self, you)
-          state.dead = self.dead = false
-        } else {
-          if (Math.abs(you.posX - self.posX) > 0.3) {
-            self.posX = (self.posX + you.posX) / 2
-            self.velX = (self.velX + you.velX) / 2
-          }
-          if (Math.abs(you.posY - self.posY) > 0.3) {
-            self.posY = (self.posY + you.posY) / 2
-            self.velY = (self.velY + you.velY) / 2
-          }
-          if (Math.abs(you.velX - self.velX) > 0.2) {
-            self.velX = you.velX
-          }
-          if (Math.abs(you.velY - self.velY) > 0.2) {
-            self.posY = you.posY
-          }
-          if (controls.isAccelerating() !== (you.accel !== null)
-              || controls.isBraking() !== (you.brake !== null)) {
-            resendCtrl = true
-          }
-          ui.updateScore(you.score, self.score)
-          self.name = you.name
-          self.score = you.score
-          state.dead = self.dead = you.dead
-          if (you.health < self.health) {
-            draw.gotDamage(self.health - you.health)
-            draw.addBubble({ x: self.posX, y: self.posY, alpha: 100, radius: 0.3 * (1 + self.health - you.health) })
-          }
-          self.health = you.health
-          self.latched = you.latched
-          self.speedMul = you.speedMul
-          self.item = you.item
-          self.regen = you.regen
-          self.overdrive = you.overdrive
-          self.rubbership = you.rubbership
-        }
-        if (physics.getPlanetSeed() != seed) {
-          physics.setPlanetSeed(seed)
-          objects.planets = physics.getPlanets(self.posX, self.posY)
-        }
-        if (projs.length) {
-          objects.bullets = [...objects.bullets, ...projs.filter(x => x)]
-        }
-        ui.updatePowerup(self, state)
-        physics.setPlanetSeed(seed)
-        ui.updatePlayerCount(count)
-        ui.updateHealthBar(self.health)
-
-      } else if (serial.is_board(obj)) {
+      case serial.C_board:
         leaderboard = obj.board
         ui.updateLeaderboard(leaderboard)
+        break
 
-      } else if (serial.is_orient(obj)) {
+      case serial.C_orient:
         self.orient = obj.orient
+        break
 
-      } else if (serial.is_unauth(obj)) {
+      case serial.C_unauth:
         disconnect()
+        break
 
-      } else if (serial.is_killed(obj)) {
-        draw.explosion(self, tpf)
+      case serial.C_killed:
+        draw.explosion(self, ticksPerFrame)
         leaveGame()
         ui.defeatedByPlayer(obj.ship)
+        break
 
-      } else if (serial.is_crashed(obj)) {
-        draw.explosion(self, tpf)
+      case serial.C_crashed:
+        draw.explosion(self, ticksPerFrame)
         leaveGame()
         ui.defeatedByCrash(obj.ship)
+        break
 
-      } else if (serial.is_hitpl(obj)) {
-        draw.explosion(self, tpf)
+      case serial.C_hitpl:
+        draw.explosion(self, ticksPerFrame)
         leaveGame()
         ui.defeatedByPlanet(obj.ship)
+        self.velX = 0
+        self.velY = 0
+        break
 
-      } else if (serial.is_killship(obj)) {
-        const matching = objects.ships.find(ship => ship._id === obj.ship)
-        if (matching !== null) {
-          draw.explosion(matching, tpf)
+      case serial.C_killship:
+        obj.ship = serial.deserializeShip(obj.ship)
+        if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+          draw.explosion(obj.ship, ticksPerFrame)
         }
-        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship)
+        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id)
+        break
 
-      } else if (serial.is_killproj(obj)) {
+      case serial.C_killproj:
         objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj)
+        break
 
-      } else if (serial.is_minexpl(obj)) {
+      case serial.C_minexpl:
+      {
         const mine = serial.deserializeBullet(obj.mine)
         draw.addBubble({ x: mine.posX, y: mine.posY, alpha: 200, radius: 1 })
+        break
+      }
 
-      } else if (serial.is_addpup(obj)) {
+      case serial.C_addpup:
         objects.powerups.push(serial.deserializePowerup(obj.powerup))
         ui.showPowerupAnimation()
+        break
 
-      } else if (serial.is_delpup(obj)) {
+      case serial.C_delpup:
         objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup)
+        break
 
-      } else if (serial.is_deathk(obj)) {
+      case serial.C_deathk:
         ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`)
+        break
 
-      } else if (serial.is_deathc(obj)) {
+      case serial.C_deathc:
         ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`)
+        break
 
-      } else if (serial.is_deathp(obj)) {
+      case serial.C_deathp:
         ui.addDeathLog(`${obj.ship} crashed into a planet`)
+        break
+
+      case serial.C_addpups:
+        objects.powerups.push(...obj.powerups.map(serial.deserializePowerup))
+        break
       }
     })
     
     ws.addEventListener('open', () => {
-      state.dead = false
-      if (connectTimer !== null) {
-        clearTimeout(connectTimer)
-        connectTimer = null
-      }
-      let nick = document.getElementById('nick').value.trim()
-      const perk = document.getElementById('perkselect').value.trim()
-      if (nick.length < 1) {
-        nick = ((100000000 * Math.random()) | 0).toString()
-      } else {
-        Cookies.set('avaruuspeli-name', nick)
-      }
-      Cookies.set('avaruuspeli-perk', perk)
-      ui.updateOnlineStatus('waiting for spawn')
-      serial.send(ws, serial.e_join(nick, perk))
-      draw.checkSize()
-      ui.updateControls(state)
-      joystick.resetJoystickCenter()
-      pinger = setInterval(() => {
-        if (++no_data > 8 || ws == null) {
-          disconnect()
-          return
-        }
-        serial.send(ws, serial.e_ping(performance.now()))
-      }, 500)
+      onConnect()
     })
     
     ws.addEventListener('close', () => {
@@ -319,36 +360,7 @@ const serverTick = () => {
     resendCtrl = false
   }
   
-  if (controls.isAccelerating()) {
-    physics.accel(self, chron.timeMs() - self.accel)
-  }
-  if (controls.isBraking()) {
-    physics.brake(self)
-  }
-  if (controls.isFiring() 
-    && self.fireWaitTicks <= 0
-    && !self.latched) {
-    physics.recoil(self)
-  }
-  physics.inertia(self)
-  if (!self.latched) {
-    physics.rubberband(self, rubber)
-    objects.planets = physics.getPlanets(self.posX, self.posY)
-    physics.gravityShip(self, objects.planets)
-  }
-
-  for (const ship of objects.ships) {
-    if (!ship.latched) {
-      physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY))
-    }
-  }
-
-  for (const bullet of objects.bullets) {
-    if (bullet.type !== 'mine') {
-      physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
-    }
-  }
-  
+  tick.serverTick(rubber)
   ui.updateColors(self.health, performance.now())
 }
 setInterval(serverTick, physics.MS_PER_TICK)
@@ -357,21 +369,21 @@ let turnLeftRamp = 0
 let turnRightRamp = 0
 
 const partialTick = (delta) => {
-  tpf = 1.0 * delta / physics.MS_PER_TICK
+  ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK
 
   if (!self.latched) {
     // turning
     const turnLeft = controls.isTurningLeft()
     const turnRight = controls.isTurningRight()
     if (turnLeft && !turnRight) {
-      self.orient -= turnLeftRamp * TURN_UNIT * tpf
-      turnLeftRamp = Math.min(1, turnLeftRamp + tpf * 0.1)
-      physics.onTurn(self, chron.timeMs())
+      self.orient -= turnLeftRamp * TURN_UNIT * ticksPerFrame
+      turnLeftRamp = Math.min(1, turnLeftRamp + ticksPerFrame * 0.1)
+      //physics.onTurn(self, chron.timeMs())
       resendCtrl = true
     } else if (turnRight && !turnLeft) {
-      self.orient += turnRightRamp * TURN_UNIT * tpf
-      turnRightRamp = Math.min(1, turnRightRamp + tpf * 0.1)
-      physics.onTurn(self, chron.timeMs())
+      self.orient += turnRightRamp * TURN_UNIT * ticksPerFrame
+      turnRightRamp = Math.min(1, turnRightRamp + ticksPerFrame * 0.1)
+      //physics.onTurn(self, chron.timeMs())
       resendCtrl = true
     }
     if (!turnLeft)
@@ -384,20 +396,20 @@ const partialTick = (delta) => {
   }
   
   // interpolate
-  self.posX += tpf * self.velX
-  self.posY += tpf * self.velY
+  self.posX += ticksPerFrame * self.velX
+  self.posY += ticksPerFrame * self.velY
 
   for (const ship of objects.ships) {
-    ship.posX += tpf * ship.velX
-    ship.posY += tpf * ship.velY
+    ship.posX += ticksPerFrame * ship.velX
+    ship.posY += ticksPerFrame * ship.velY
   }
   for (const bullet of objects.bullets) {
     if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += tpf * bullet.velX
-      bullet.posY += tpf * bullet.velY
-      bullet.dist += tpf * bullet.velocity
+      bullet.posX += ticksPerFrame * bullet.velX
+      bullet.posY += ticksPerFrame * bullet.velY
+      bullet.dist += ticksPerFrame * bullet.velocity
     } else if (bullet.type == 'mine') {
-      bullet.dist += tpf / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
+      bullet.dist += ticksPerFrame / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
     }
   }
   objects.bullets = objects.bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)
@@ -425,8 +437,8 @@ window.addEventListener('blur', () => {
   controls.unpress()
 }, true)
 
-window.addEventListener('beforeupload', () => {
-  serial.send(ws, serial.e_quit(state.token))
+window.addEventListener('beforeunload', () => {
+  if (ws) serial.send(ws, serial.e_quit(state.token))
 }, true)
 
 const tryReadCookies = () => {
@@ -453,12 +465,12 @@ const tryReadCookies = () => {
 
 const frame = time => {
   let delta = 0
-  if (last_partial != null) {
-    delta = time - last_partial
+  if (lastPartialTick != null) {
+    delta = time - lastPartialTick
     partialTick(delta)
     ui.updateOpacity(delta)
   }
-  last_partial = time
+  lastPartialTick = time
   draw.frame(time, delta)
   window.requestAnimationFrame(frame)
 }

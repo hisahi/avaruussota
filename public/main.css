@@ -65,7 +65,7 @@ canvas {
   text-align: center;
   align-self: center;
 }
-#dialogbox, #nick, #dialogbox button {
+#dialogbox, #nick, #dialogbox button, #gamehelp button {
   background: #222;
   color: #fff;
   font-family: monospace;
@@ -179,6 +179,17 @@ canvas {
   opacity: 0.3;
   font-size: 75%;
 }
+#debuginfo {
+  position: fixed;
+  bottom: 100px;
+  left: 5px;
+  padding: 5px;
+  display: inline-block;
+  text-align: left;
+  color: #fff;
+  opacity: 0.6;
+  font-size: 80%;
+}
 #mobilecontrols {
   position: fixed;
   bottom: 0;
@@ -213,6 +224,23 @@ canvas {
   color: #fff;
   position: fixed;
   pointer-events: none;
+}
+#gamehelp {
+  display: none;
+  z-index: 100;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  margin: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  color: #eee;
+  overflow-y: scroll;
+}
+#gamehelp .contents {
+  max-width: 800px;
+  margin: 0 auto;
 }
 a {
   border: dotted 1px rgba(136,136,136,0.5);
@@ -263,7 +291,7 @@ a {
 #leaderboard td {
   padding-left: 2em;
 }
-i {
+#dialog i {
   font-size: 60%;
   color: #888;
 }

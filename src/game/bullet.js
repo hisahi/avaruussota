@@ -44,16 +44,10 @@ const bulletSystemFactory = handler => {
       return
     }
     const shooter = ships.getShipById(bullet.shooter)
-    ship.health -= BULLET_DAMAGE_MULTIPLIER * ship.healthMul * bullet.damage
     if (shooter && shooter.absorber) {
       shooter.health += 0.01 * shooter.healthMul
     }
-    if (ship.health <= 0) {
-      if (shooter) {
-        ++shooter.score
-      }
-      handler.killShipByBullet(ship, bullet)
-    }
+    ships.damageShip(ship, BULLET_DAMAGE_MULTIPLIER * bullet.damage, bullet, shooter, handler.killShipByBullet)
     if (bullet.type !== 'laser') {
       removeBullet(bullet)
     }
@@ -111,11 +105,20 @@ const bulletSystemFactory = handler => {
           if (ship._id !== bullet.shooter
             && Math.abs(ship.posX - bullet.posX) < bullet.velocity
             && Math.abs(ship.posY - bullet.posY) < bullet.velocity) {
-            const [p1, p2, p3] = geom.getCollisionPoints(ship)
-            if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY],
-              [newX, newY], p1, p2, p3)) {
-              collisionShip = ship
-              break
+            const t = geom.closestSynchroDistance(
+              [ship.posX, ship.posY],
+              [ship.posXnew, ship.posYnew],
+              [bullet.posX, bullet.posY],
+              [newX, newY])
+            if (0 <= t && t <= 1) {
+              ship.posX = geom.lerp1D(ship.posX, t, ship.posXnew)
+              ship.posY = geom.lerp1D(ship.posY, t, ship.posYnew)
+              const [p1, p2, p3] = geom.getCollisionPoints(ship)
+              if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY],
+                [newX, newY], p1, p2, p3)) {
+                collisionShip = ship
+                break
+              }
             }
           }
         }
@@ -186,6 +189,7 @@ const bulletSystemFactory = handler => {
         if (primerShip || bullet.isHit) {
           // blow up the mine
           shipList.forEach(ship => {
+            if (bullet.shooter === ship._id) return
             if (Math.abs(ship.posX - bullet.posX) > 15 ||
               Math.abs(ship.posY - bullet.posY) > 15) {
               return
@@ -198,17 +202,8 @@ const bulletSystemFactory = handler => {
               damage = 0
             }
 
-            const shooter = ships.getShipById[bullet.shooter]
-            if (shooter && shooter._id !== ship._id) {
-              ship.health -= damage * ship.healthMul
-              
-              if (ship.health <= 0) {
-                if (shooter) {
-                  ++shooter.score
-                }
-                handler.killShipByBullet(ship, bullet)
-              }
-            }
+            const shooter = ships.getShipById(bullet.shooter)
+            ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet)
           })
 
           handler.onMineExplode(bullet)
@@ -249,9 +244,9 @@ const bulletSystemFactory = handler => {
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor,
-      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul,
-      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul,
+      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + Math.hypot(ship.velX, ship.velY),
+      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velX,
+      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velY,
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,

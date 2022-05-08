@@ -37,6 +37,7 @@ const gameFactory = (wss) => {
     if (existing == 0) {
       physics.newPlanetSeed()
       rubberbandRadius = rubberbandRadiusGoal
+      powerups.clear()
     }
     return ships.newPlayerShip(
       Math.min(rubberbandRadius, rubberbandRadiusGoal),
@@ -50,6 +51,7 @@ const gameFactory = (wss) => {
       ships.getShipCount(), 
       rubberbandRadius, 
       physics.getPlanetSeed()))
+    serial.send(ws, serial.e_addpups(powerups.getPowerups().filter(x => x)))
     serial.send(ws, serial.e_board(leaderboard))
   }
 
@@ -79,7 +81,7 @@ const gameFactory = (wss) => {
   }
 
   const onShipKilled = (ship) => {
-    announce(serial.e_killship(ship._id))
+    announce(serial.e_killship(ship))
     bullets.removeMinesBy(ship)
     updateLeaderboard()
   }
@@ -158,8 +160,8 @@ const gameFactory = (wss) => {
     const radius = Math.min(rubberbandRadius, rubberbandRadiusGoal)
     ships.shipAcceleration(1, rubberbandRadius, rubberbandRadiusGoal)
     powerups.maybeSpawnPowerup(ships, radius)
-    ships.findShipPlanetCollisions()
 
+    ships.premoveShips(1)
     bullets.moveBullets(1, ships, powerups)
     ships.moveShips(1, powerups)
     powerups.updatePowerups(ships)
@@ -204,9 +206,9 @@ const gameFactory = (wss) => {
     }
 
     const now = chron.timeMs()
-    if (ship.orient != angle && ship.accel !== null) {
+    /*if (ship.orient != angle && ship.accel !== null) {
       physics.onTurn(ship, now)
-    }
+    }*/
     if (!ship.latched) {
       ship.orient = angle
     }
@@ -228,35 +230,28 @@ const gameFactory = (wss) => {
 
   const applyPerk = (ship, perk) => {
     switch (perk) {
-    case 'fastershots': {
+    case 'fastershots':
       ship.bulletSpeedMul = 1.2
       break
-    }
-    case 'fasterrate': {
-      ship.firingInterval = 3
+    case 'fasterrate':
+      ship.firingInterval = 3.25
       break
-    }
-    case 'healthboost': {
+    case 'healthboost':
       ship.healthMul = 0.75
       break
-    }
-    case 'movespeed': {
+    case 'movespeed':
       ship.highAgility = true
       ship.speedMul = 0.9
       break
-    }
-    case 'planetbouncer': {
+    case 'planetbouncer':
       ship.planetDamageMul = 0.5
       break
-    }
-    case 'regen': {
+    case 'regen':
       ship.absorber = true
       break
-    }
-    case 'fastheal': {
+    case 'fastheal':
       ship.healRate = 1.5 
       break
-    }
     }
   }
 
@@ -307,12 +302,12 @@ const gameFactory = (wss) => {
       break
     case 'orion':
       ship.item = null
-      for (let i = 0; i < 5; ++i) {
-        physics.accel(ship, 5000)
-      }
       for (let i = -3; i <= 3; ++i) {
         addProjectile(ship, 'bullet', { extraDist: 0, orientOffset: Math.PI + i * 0.15 - 0.05, damageFactor: 0.75, rangeSub: 25 })
         addProjectile(ship, 'bullet', { extraDist: 0.5, orientOffset: Math.PI + i * 0.15 + 0.05, damageFactor: 0.75, rangeSub: 25 })
+      }
+      for (let i = 0; i < 50; ++i) {
+        physics.accel(ship, 1000)
       }
       break
     }

@@ -16,7 +16,7 @@ upgrade options are:
 * *Coilgun*: bullets fly faster
 * *Rapid Fire*: increased rate of fire
 * *Shields*: higher shields
-* *Agile*: ship is somewhat slower but turns more easily
+* *Agile*: ship is slightly slower but turns more easily
 * *Meteoroid*: damage caused by crashing into planets is halved
 * *Turboheal*: your ship's shields will recharge faster
 * *Absorber*: you gain some shields every time you hit another player

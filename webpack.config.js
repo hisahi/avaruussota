@@ -21,15 +21,6 @@ module.exports = {
       }
     ]
   },
-  resolve: {
-    alias: {
-      pson: 'pson/dist/PSON.js',
-    },
-    fallback: {
-      'stream': require.resolve('stream-browserify'),
-      'buffer': require.resolve('buffer'),
-    }
-  },
   stats: {
     colors: true
   },

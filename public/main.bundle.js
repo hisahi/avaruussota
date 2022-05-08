@@ -618,7 +618,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
       drawShip(self);
 
       if (self.health < 0.75) {
-        const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6);
+        const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 4);
 
         if (!Object.prototype.hasOwnProperty.call(lastSmoke, self._id) || time - lastSmoke[self._id] > interval) {
           smokes.push({
@@ -638,7 +638,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
         drawShip(ship);
 
         if (ship.health < 0.75) {
-          const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 6);
+          const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 4);
 
           if (!Object.prototype.hasOwnProperty.call(lastSmoke, ship._id) || time - lastSmoke[ship._id] > interval) {
             smokes.push({
@@ -862,6 +862,58 @@ module.exports = (self, state, controls) => {
 
 /***/ }),
 
+/***/ "./js/tick.js":
+/*!********************!*\
+  !*** ./js/tick.js ***!
+  \********************/
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+const physics = __webpack_require__(/*! ../src/game/physics */ "./src/game/physics.js");
+
+const chron = __webpack_require__(/*! ../src/utils/chron */ "./src/utils/chron.js");
+
+module.exports = (self, objects, controls) => {
+  const serverTick = rubber => {
+    if (controls.isAccelerating()) {
+      physics.accel(self, chron.timeMs() - self.accel);
+    }
+
+    if (controls.isBraking()) {
+      physics.brake(self);
+    }
+
+    if (controls.isFiring() && self.fireWaitTicks <= 0 && !self.latched) {
+      physics.recoil(self);
+    }
+
+    physics.inertia(self);
+
+    if (!self.latched) {
+      physics.rubberband(self, rubber);
+      objects.planets = physics.getPlanets(self.posX, self.posY);
+      physics.gravityShip(self, objects.planets);
+    }
+
+    for (const ship of objects.ships) {
+      if (!ship.latched) {
+        physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY));
+      }
+    }
+
+    for (const bullet of objects.bullets) {
+      if (bullet.type !== 'mine') {
+        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+      }
+    }
+  };
+
+  return {
+    serverTick
+  };
+};
+
+/***/ }),
+
 /***/ "./js/ui.js":
 /*!******************!*\
   !*** ./js/ui.js ***!
@@ -872,6 +924,7 @@ const common = __webpack_require__(/*! ./common */ "./js/common.js");
 
 module.exports = callbacks => {
   let dialogOpacity = 0;
+  const DEBUG = false;
   document.getElementById('scoreanimation').style.animation = 'none';
   document.getElementById('scoreanimation').style.visibility = 'hidden';
   document.getElementById('powerupanimation').style.animation = 'none';
@@ -989,6 +1042,11 @@ module.exports = callbacks => {
     document.getElementById('onlinestatus').textContent = text;
   };
 
+  const updateDebugInfo = text => {
+    if (!DEBUG) return;
+    document.getElementById('debuginfo').textContent = text;
+  };
+
   const updateColors = (health, time) => {
     if (health < 0.3) {
       document.getElementById('yourscore').style.color = time % 1000 >= 500 ? '#f88' : '#fff';
@@ -1070,6 +1128,12 @@ module.exports = callbacks => {
     callbacks.tryLockMouse(e);
     callbacks.joinGame();
   });
+  document.getElementById('btnhelp').addEventListener('click', () => {
+    document.getElementById('gamehelp').style.display = 'block';
+  });
+  document.getElementById('btnclosehelp').addEventListener('click', () => {
+    document.getElementById('gamehelp').style.display = 'none';
+  });
   document.getElementById('btnfs').addEventListener('click', () => {
     if (document.fullscreenElement) {
       document.exitFullscreen();
@@ -1080,6 +1144,7 @@ module.exports = callbacks => {
   document.getElementById('btnzoom').addEventListener('click', () => {
     callbacks.nextZoom(1);
   });
+  if (!DEBUG) document.getElementById('debuginfo').style.display = 'none';
   return {
     updateZoomText,
     updatePowerup,
@@ -1091,6 +1156,7 @@ module.exports = callbacks => {
     updateOpacity,
     updateLeaderboard,
     updateOnlineStatus,
+    updateDebugInfo,
     updateColors,
     updateScore,
     updatePlayerCount,
@@ -1313,19 +1379,12 @@ const bulletSystemFactory = handler => {
     }
 
     const shooter = ships.getShipById(bullet.shooter);
-    ship.health -= BULLET_DAMAGE_MULTIPLIER * ship.healthMul * bullet.damage;
 
     if (shooter && shooter.absorber) {
       shooter.health += 0.01 * shooter.healthMul;
     }
 
-    if (ship.health <= 0) {
-      if (shooter) {
-        ++shooter.score;
-      }
-
-      handler.killShipByBullet(ship, bullet);
-    }
+    ships.damageShip(ship, BULLET_DAMAGE_MULTIPLIER * bullet.damage, bullet, shooter, handler.killShipByBullet);
 
     if (bullet.type !== 'laser') {
       removeBullet(bullet);
@@ -1388,11 +1447,17 @@ const bulletSystemFactory = handler => {
           const ship = shipList[j];
 
           if (ship._id !== bullet.shooter && Math.abs(ship.posX - bullet.posX) < bullet.velocity && Math.abs(ship.posY - bullet.posY) < bullet.velocity) {
-            const [p1, p2, p3] = geom.getCollisionPoints(ship);
+            const t = geom.closestSynchroDistance([ship.posX, ship.posY], [ship.posXnew, ship.posYnew], [bullet.posX, bullet.posY], [newX, newY]);
 
-            if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY], [newX, newY], p1, p2, p3)) {
-              collisionShip = ship;
-              break;
+            if (0 <= t && t <= 1) {
+              ship.posX = geom.lerp1D(ship.posX, t, ship.posXnew);
+              ship.posY = geom.lerp1D(ship.posY, t, ship.posYnew);
+              const [p1, p2, p3] = geom.getCollisionPoints(ship);
+
+              if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY], [newX, newY], p1, p2, p3)) {
+                collisionShip = ship;
+                break;
+              }
             }
           }
         }
@@ -1458,6 +1523,8 @@ const bulletSystemFactory = handler => {
         if (primerShip || bullet.isHit) {
           // blow up the mine
           shipList.forEach(ship => {
+            if (bullet.shooter === ship._id) return;
+
             if (Math.abs(ship.posX - bullet.posX) > 15 || Math.abs(ship.posY - bullet.posY) > 15) {
               return;
             }
@@ -1468,19 +1535,8 @@ const bulletSystemFactory = handler => {
               damage = 0;
             }
 
-            const shooter = ships.getShipById[bullet.shooter];
-
-            if (shooter && shooter._id !== ship._id) {
-              ship.health -= damage * ship.healthMul;
-
-              if (ship.health <= 0) {
-                if (shooter) {
-                  ++shooter.score;
-                }
-
-                handler.killShipByBullet(ship, bullet);
-              }
-            }
+            const shooter = ships.getShipById(bullet.shooter);
+            ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet);
           });
           handler.onMineExplode(bullet);
           removeBullet(bullet);
@@ -1521,9 +1577,9 @@ const bulletSystemFactory = handler => {
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor,
-      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul,
-      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul,
+      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + Math.hypot(ship.velX, ship.velY),
+      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velX,
+      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velY,
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,
@@ -1558,20 +1614,24 @@ module.exports = {
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
 const GRAV = 6.67e-11;
-const TICKS_PER_SECOND = 20;
+const TICKS_PER_SECOND = 25;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
-const MAX_SHIP_VELOCITY = 48 / TICKS_PER_SECOND;
+const MAX_SHIP_VELOCITY = 64 / TICKS_PER_SECOND;
+const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5;
 const MIN_SHIP_VELOCITY = 0.01;
-const LATCH_VELOCITY = 0.3;
+const LATCH_VELOCITY = 0.33;
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
-const VIEW_DISTANCE = 50;
-const MAX_BULLET_DISTANCE = 70;
+const VIEW_DISTANCE = 55;
+const MAX_BULLET_DISTANCE = 75;
 const RUBBERBAND_BUFFER = 80;
+const RUBBERBAND_RADIUS_MUL = 80;
 const MINE_LIFETIME = 60;
 const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
 const LCG = __webpack_require__(/*! ../utils/lcg */ "./src/utils/lcg.js");
+
+const geom = __webpack_require__(/*! ../utils/geom */ "./src/utils/geom.js");
 
 const PLANET_CHUNK_SIZE = VIEW_DISTANCE * 1.6 + 1;
 const lcg = new LCG(0);
@@ -1579,15 +1639,7 @@ let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
   // time in milliseconds
-  return 0.0875 + 0.000025 * accelTimeMs;
-};
-
-const onTurn = (ship, now) => {
-  if (ship.highAgility) {
-    ship.accel = now / 16 + ship.accel * 15 / 16;
-  } else {
-    ship.accel = now;
-  }
+  return 0.0875 + 0.000025 * Math.min(accelTimeMs, 2500);
 };
 
 const checkMinVelocity = ship => {
@@ -1600,7 +1652,7 @@ const checkMinVelocity = ship => {
 };
 
 const checkMaxVelocity = ship => {
-  const maxvel = MAX_SHIP_VELOCITY * healthToVelocity(ship.health) * ship.speedMul;
+  const maxvel = ACTUAL_MAX_SHIP_VELOCITY * healthToVelocity(ship.health) * ship.speedMul;
   const v = Math.hypot(ship.velX, ship.velY);
 
   if (v > maxvel) {
@@ -1668,7 +1720,7 @@ const hasRegen = ship => {
 };
 
 const accel = (ship, accelTimeMs) => {
-  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health) * (hasOverdrive(ship) ? 2 : 1);
+  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health) * ship.thrustBoost * (hasOverdrive(ship) ? 2 : 1) * (ship.highAgility ? 1.33 : 1);
 
   if (ship.speedMul !== 1) {
     accelMul *= Math.sqrt(ship.speedMul);
@@ -1705,11 +1757,11 @@ const gravityBullet = (bullet, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y);
 
-    if (d > planet.radius + 1 && d < 10 + planet.radius * 3) {
+    if (d > planet.radius + 1 && d < 10 + planet.radius * 4) {
       const dx = planet.x - bullet.posX;
       const dy = planet.y - bullet.posY;
       const r2 = Math.hypot(dx, dy) ** 2;
-      const f = GRAV * 8e+9 / r2 * planet.radius;
+      const f = GRAV * 1.5e+10 / r2 * planet.radius;
       bullet.velX += f * dx;
       bullet.velY += f * dy;
     }
@@ -1721,25 +1773,34 @@ const gravityBullet = (bullet, planets) => {
 };
 
 const gravityShip = (ship, planets) => {
+  let thrust = 1;
+  const vector = [Math.sin(-ship.orient), Math.cos(-ship.orient)];
+  const dv = Math.hypot(ship.velX, ship.velY);
+
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
-    const dv = Math.hypot(ship.velX, ship.velY);
 
-    if (d > planet.radius + 1.5 + dv * 0.3 && d < 10 + planet.radius * 3) {
+    if (d > planet.radius + 1.5 + dv * 0.3 && d < 10 + planet.radius * 4) {
       const dx = planet.x - ship.posX;
       const dy = planet.y - ship.posY;
       const r2 = Math.hypot(dx, dy) ** 2;
-      const f = GRAV * 8e+8 * planet.radius / r2 / (ship.accel !== null || ship.brake !== null ? 5 : 1);
+      const f = GRAV * 1e+9 * planet.radius / r2 / (ship.accel !== null || ship.brake !== null ? 5 : 1);
       ship.velX += f * dx;
       ship.velY += f * dy;
+
+      if (ship.accel !== null) {
+        const direction = geom.normalize(dx, dy);
+        thrust += 3 * Math.min(1, dv / MAX_SHIP_VELOCITY) ** 0.5 * (1000 * Math.max(0, f * (direction[0] * vector[0] + direction[1] * vector[1]))) ** 1.5;
+      }
     }
   }
 
+  ship.thrustBoost = thrust;
   checkMaxVelocity(ship);
 };
 
 const getRubberbandRadius = playerCount => {
-  return 75 * Math.pow(Math.max(playerCount, 1), 0.75);
+  return RUBBERBAND_RADIUS_MUL * Math.pow(Math.max(playerCount, 1), 0.75);
 };
 
 const rubberband = (ship, radius) => {
@@ -1749,24 +1810,29 @@ const rubberband = (ship, radius) => {
     const maxRadius = radius + RUBBERBAND_BUFFER;
     const baseX = -ship.posX / Math.hypot(ship.posX, ship.posY);
     const baseY = -ship.posY / Math.hypot(ship.posX, ship.posY);
+    const d = (distCenter - radius) / (maxRadius - radius);
+    ship.velX += baseX * 0.3 * MAX_SHIP_VELOCITY * (1.1 * d) ** 8;
+    ship.velY += baseY * 0.3 * MAX_SHIP_VELOCITY * (1.1 * d) ** 8;
+    const v = Math.hypot(ship.velX, ship.velY);
 
-    if (distCenter > maxRadius) {
-      ship.velX = ship.velY = 0;
+    if (v > MAX_SHIP_VELOCITY) {
+      const nv = geom.lerp1D(v, 0.05, MAX_SHIP_VELOCITY);
+      ship.velX *= nv / v;
+      ship.velY *= nv / v;
     }
 
-    ship.velX += baseX * 0.3 * MAX_SHIP_VELOCITY * (1.1 * (distCenter - radius) / (maxRadius - radius)) ** 8;
-    ship.velY += baseY * 0.3 * MAX_SHIP_VELOCITY * (1.1 * (distCenter - radius) / (maxRadius - radius)) ** 8;
     checkMaxVelocity(ship);
   }
 };
 
 const healthToVelocity = health => {
-  return 0.6 + 0.4 * health;
+  return 0.7 + 0.3 * health;
 };
 
 module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
+  ACTUAL_MAX_SHIP_VELOCITY,
   MS_PER_TICK,
   BULLET_VELOCITY,
   LATCH_VELOCITY,
@@ -1782,7 +1848,6 @@ module.exports = {
   inertia,
   brake,
   recoil,
-  onTurn,
   gravityBullet,
   gravityShip,
   rubberband,
@@ -1829,6 +1894,8 @@ const powerupSystemFactory = handler => {
   let nextPowerup = null;
 
   const getPowerups = () => Object.values(powerups);
+
+  const clear = () => powerups = {};
 
   const trySpawnPowerup = (playerCount, ships, radius) => {
     let tries = playerCount * 4;
@@ -1976,6 +2043,7 @@ const powerupSystemFactory = handler => {
 
   return {
     getPowerups,
+    clear,
     applyPowerup,
     updateClosestPlayer,
     maybeSpawnPowerup,
@@ -2008,6 +2076,8 @@ const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
 const Counter = __webpack_require__(/*! ../utils/counter */ "./src/utils/counter.js");
 
 const shipCounter = new Counter();
+const SHIP_RECT_RADIUS = 2;
+const SHIP_RADIUS = 1.35;
 
 const newShip = () => ({
   posX: 0,
@@ -2027,6 +2097,7 @@ const newShip = () => ({
   firing: false,
   latched: false,
   fireWaitTicks: 0,
+  thrustBoost: 1,
   // perks
   firingInterval: 4,
   bulletSpeedMul: 1.0,
@@ -2041,11 +2112,13 @@ const newShip = () => ({
   rubbership: 0,
   regen: 0,
   overdrive: 0,
+  lastDamageAt: null,
+  lastDamageBy: null,
   dead: false,
   _id: shipCounter.next()
 });
 
-const shipFields = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks', 'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'];
+const shipFields = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks', 'thrustBoost', 'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'];
 
 const shipSystemFactory = handler => {
   let ships = {};
@@ -2256,17 +2329,26 @@ const shipSystemFactory = handler => {
     }
   };
 
-  const moveShips = (delta, powerups) => {
+  const premoveShips = delta => {
     const shipList = getShips();
-    const powerupList = powerups.getPowerups();
     const shipCount = shipList.length;
-    const powerupCount = powerupList.length;
-    const dist = physics.MAX_SHIP_VELOCITY + 1;
 
     for (let i = 0; i < shipCount; ++i) {
       const ship1 = shipList[i];
       ship1.posXnew = ship1.posX + delta * ship1.velX;
       ship1.posYnew = ship1.posY + delta * ship1.velY;
+    }
+  };
+
+  const moveShips = (delta, powerups) => {
+    const shipList = getShips();
+    const powerupList = powerups.getPowerups();
+    const shipCount = shipList.length;
+    const powerupCount = powerupList.length;
+    const dist = physics.ACTUAL_MAX_SHIP_VELOCITY + 1;
+
+    for (let i = 0; i < shipCount; ++i) {
+      const ship1 = shipList[i];
 
       for (let j = 0; j < powerupCount; ++j) {
         const pup = powerupList[j];
@@ -2290,12 +2372,31 @@ const shipSystemFactory = handler => {
         if (Math.abs(ship1.posX - ship2.posX) < dist && Math.abs(ship1.posY - ship2.posY) < dist) {
           const t = geom.closestSynchroDistance([ship1.posX, ship1.posY], [ship1.posXnew, ship1.posYnew], [ship2.posX, ship2.posY], [ship2.posXnew, ship2.posYnew]);
 
-          if (0 <= t && t <= delta) {
-            ship1.posX = ship1.posX + t * ship1.velX;
-            ship1.posY = ship1.posY + t * ship1.velY;
-            ship2.posX = ship2.posX + t * ship2.velX;
-            ship2.posY = ship2.posY + t * ship2.velY;
+          if (0 <= t && t <= 1) {
+            ship1.posX = ship1.posX + t * delta * ship1.velX;
+            ship1.posY = ship1.posY + t * delta * ship1.velY;
+            ship2.posX = ship2.posX + t * delta * ship2.velX;
+            ship2.posY = ship2.posY + t * delta * ship2.velY;
             testShipShipCollision(ship1, ship2);
+          }
+        }
+      }
+
+      const planets = physics.getPlanets(ship1.posX, ship1.posY);
+
+      for (let j = 0; j < planets.length; ++j) {
+        const planet = planets[j];
+        const search = planet.radius + SHIP_RADIUS;
+        const searchSquare = search ** 2;
+        [ship1.posX, ship1.posY] = geom.lineClosestPointToPoint(ship1.posX, ship1.posY, ship1.posXnew, ship1.posYnew, planet.x, planet.y);
+
+        if (Math.abs(ship1.posX - planet.x) < search && Math.abs(ship1.posY - planet.y) < search) {
+          if (maths.squarePair(ship1.posX - planet.x, ship1.posY - planet.y) < searchSquare) {
+            if (!ship1.dead) {
+              handleShipPlanetCollision(ship1, planet);
+            }
+
+            break;
           }
         }
       }
@@ -2311,7 +2412,7 @@ const shipSystemFactory = handler => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX;
     const dy = ship1.velY - ship2.velY;
-    const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy)) / (physics.MAX_SHIP_VELOCITY / 4);
+    const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy)) / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1);
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1);
 
@@ -2328,7 +2429,7 @@ const shipSystemFactory = handler => {
     [ship1.velY, ship2.velY] = [ship2.velY, ship1.velY];
 
     if (ship1.health <= 0) {
-      if (ship2.health > 0 && Math.hypot(ship2.velX, ship2.velY) > Math.hypot(ship1.velX, ship1.velY)) {
+      if (ship2.health > 0) {
         ++ship2.score;
       }
 
@@ -2337,7 +2438,7 @@ const shipSystemFactory = handler => {
     }
 
     if (ship2.health <= 0) {
-      if (ship1.health > 0 && Math.hypot(ship1.velX, ship1.velY) > Math.hypot(ship2.velX, ship2.velY)) {
+      if (ship1.health > 0) {
         ++ship1.score;
       }
 
@@ -2347,12 +2448,11 @@ const shipSystemFactory = handler => {
   };
 
   const testShipShipCollision = (ship1, ship2) => {
-    const [p1, p2, p3] = geom.getCollisionPoints(ship1);
-
-    if (Math.abs(ship1.posX - ship2.posX) < 2 && Math.abs(ship1.posY - ship2.posY) < 2) {
+    if (Math.abs(ship1.posX - ship2.posX) < SHIP_RECT_RADIUS && Math.abs(ship1.posY - ship2.posY) < SHIP_RECT_RADIUS) {
+      const [p1, p2, p3] = geom.getCollisionPoints(ship1);
       const [q1, q2,, q4] = geom.getShipPoints(ship2);
 
-      if (geom.pointInTriangle(q1, q2, q4, p1) || geom.pointInTriangle(q1, q2, q4, p2) || geom.pointInTriangle(q1, q2, q4, p3)) {
+      if (geom.testTriangleCollision(p1, p2, p3, q1, q2, q4)) {
         handleShipShipCollision(ship1, ship2);
       }
     }
@@ -2360,72 +2460,76 @@ const shipSystemFactory = handler => {
 
   const handleShipPlanetCollision = (ship, planet) => {
     const v = Math.hypot(ship.velX, ship.velY);
-    const playerAngle = Math.atan2(ship.velX, ship.velY);
-    const planetAngle = Math.atan2(planet.x - ship.posX, planet.y - ship.posY);
-    const diffAngle = playerAngle - planetAngle + Math.PI;
-    const col_mul = geom.getPlanetAngleMultiplier(ship.orient, playerAngle);
-    const col_vel = physics.MAX_SHIP_VELOCITY / 1.5 * col_mul;
-    let damage = v / col_vel * ship.planetDamageMul * (physics.hasRubbership(ship) ? 0 : 1);
+    let dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY);
+    const d = 1 - dist / (planet.radius - 1);
+    const col_mul = geom.getPlanetDamageMultiplier(Math.sin(-ship.orient), Math.cos(-ship.orient), ship.posX - planet.x, ship.posY - planet.y);
+    if (!col_mul) return;
+    const col_vmul = geom.getPlanetDamageSpeedMultiplier(ship.velX, ship.velY, ship.posX - planet.x, ship.posY - planet.y);
+    let damage = Math.max(v * col_mul * col_vmul, d) / physics.MAX_SHIP_VELOCITY * ship.planetDamageMul * (physics.hasRubbership(ship) ? 0 : 1);
 
-    if (!ship.accel && v > 0 && v < physics.LATCH_VELOCITY * (ship.brake !== null ? 1.5 : 1)) {
+    if (!ship.accel && v > 0 && v * col_mul < physics.LATCH_VELOCITY * (ship.brake !== null ? 1.75 : 1)) {
       latchToPlanet(ship, planet);
       return;
     }
 
-    const dist = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
-
-    if (dist < planet.radius - 1.5) {
-      ship.posX = planet.x + (ship.posX - planet.x) / ((planet.radius + 2) / dist);
-      ship.posY = planet.y + (ship.posY - planet.y) / ((planet.radius + 2) / dist);
-    }
-
-    if (col_mul < 1.2 && ship.accel !== null) {
+    if (col_mul < 0.2 && ship.accel !== null) {
       damage *= 0.2;
     }
 
-    if (damage > 0.05) {
-      ship.health -= damage * ship.healthMul;
+    let offx = ship.posX - planet.x;
+    let offy = ship.posY - planet.y;
+    [offx, offy] = geom.normalize(offx, offy);
+    const radius = planet.radius + SHIP_RADIUS;
+    ship.posX = planet.x + offx * (radius + 0.5);
+    ship.posY = planet.y + offy * (radius + 0.5);
+    ship.velX = -ship.velX + offx * v * 2;
+    ship.velY = -ship.velY + offy * v * 2;
+    if (v > 0) [ship.velX, ship.velY] = geom.normalize(ship.velX, ship.velY, v);
+
+    if (damage >= 0.05) {
+      damageShip(ship, damage, null, null, ship => {
+        if (ship.lastDamageAt && chron.timeMs() - ship.lastDamageAt < 2500) {
+          const by = getShipById(ship.lastDamageBy);
+          if (by) ++by.score;
+        }
+
+        handler.onShipKilledByPlanet(ship);
+        killShip(ship);
+      });
     }
 
-    if (ship.health <= 0) {
-      handler.onShipKilledByPlanet(ship);
-      killShip(ship);
+    if (ship.dead) {
       return;
     }
 
-    ship.velX = v * Math.sin(diffAngle);
-    ship.velY = v * Math.cos(diffAngle);
-    ship.posX += v / 8 * (ship.posX - planet.x);
-    ship.posY += v / 8 * (ship.posY - planet.y);
-
-    if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {
-      latchToPlanet(ship, planet);
-    }
-  };
-
-  const findShipPlanetCollisions = () => {
-    getShips().forEach(ship => {
-      const planets = physics.getPlanets(ship.posX, ship.posY);
-
-      for (const planet of planets) {
-        const search = planet.radius + 1.35;
-
-        if (Math.abs(ship.posX - planet.x) < search && Math.abs(ship.posY - planet.y) < search) {
-          if (Math.hypot(ship.posX - planet.x, ship.posY - planet.y) < search) {
-            if (!ship.dead) {
-              handleShipPlanetCollision(ship, planet);
-            }
-
-            break;
-          }
-        }
-      }
-    });
+    dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY);
+    if (planet.radius - dist > 0.25) latchToPlanet(ship, planet);
+    /*if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {
+      latchToPlanet(ship, planet)
+    }*/
   };
 
   const deleteShip = ship => {
     ship.dead = true;
     removeShipById(ship._id);
+  };
+
+  const damageShip = (ship, damage, bullet, shooter, onDeath) => {
+    if (ship.dead) return;
+    ship.health -= damage * ship.healthMul;
+
+    if (shooter) {
+      ship.lastDamageAt = chron.timeMs();
+      ship.lastDamageBy = shooter._id;
+    }
+
+    if (ship.health <= 0) {
+      if (shooter) {
+        ++shooter.score;
+      }
+
+      onDeath(ship, bullet);
+    }
   };
 
   const killShip = ship => {
@@ -2437,12 +2541,13 @@ const shipSystemFactory = handler => {
     getShips,
     getShipById,
     getShipCount,
+    damageShip,
     removeShipById,
     newPlayerShip,
+    premoveShips,
     moveShips,
     killShip,
     deleteShip,
-    findShipPlanetCollisions,
     shipAcceleration
   };
 };
@@ -2495,7 +2600,25 @@ module.exports = Counter;
 /*!***************************!*\
   !*** ./src/utils/geom.js ***!
   \***************************/
-/***/ ((module) => {
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
+
+const SHIP_SCALE = 1.1;
+
+const lerp1D = (a, t, b) => {
+  return a + t * (b - a);
+};
+
+const lerp2D = (a, t, b) => {
+  return [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])];
+};
+
+const normalize = (x, y, m) => {
+  const d = Math.hypot(x, y);
+  m = m || 1;
+  return [m * x / d, m * y / d];
+};
 
 const pointInTriangle = (p1, p2, p3, p) => {
   const [x1, y1] = p1;
@@ -2506,6 +2629,30 @@ const pointInTriangle = (p1, p2, p3, p) => {
   const c2 = ((y3 - y1) * (xp - x3) + (x1 - x3) * (yp - y3)) / ((y2 - y3) * (x1 - x3) + (x3 - x2) * (y1 - y3));
   const c3 = 1 - c1 - c2;
   return c1 > 0 && c2 > 0 && c3 > 0;
+};
+
+const testTriangleCollisionSub = (a1, a2, a3, b1, b2, b3) => {
+  const dax = a1[0] - b3[0],
+        day = a1[1] - b3[1];
+  const dbx = a2[0] - b3[0],
+        dby = a2[1] - b3[1];
+  const dcx = a3[0] - b3[0],
+        dcy = a3[1] - b3[1];
+  const b32x = b3[0] - b2[0];
+  const b23y = b2[1] - b3[1];
+  const D = b23y * (b1[0] - b3[0]) + b32x * (b1[1] - b3[1]);
+  const sa = b23y * dax + b32x * day;
+  const sb = b23y * dbx + b32x * dby;
+  const sc = b23y * dcx + b32x * dcy;
+  const ta = (b3[1] - b1[1]) * dax + (b1[0] - b3[0]) * day;
+  const tb = (b3[1] - b1[1]) * dbx + (b1[0] - b3[0]) * dby;
+  const tc = (b3[1] - b1[1]) * dcx + (b1[0] - b3[0]) * dcy;
+  if (D < 0) return sa >= 0 && sb >= 0 && sc >= 0 || ta >= 0 && tb >= 0 && tc >= 0 || sa + ta <= D && sb + tb <= D && sc + tc <= D;
+  return sa <= 0 && sb <= 0 && sc <= 0 || ta <= 0 && tb <= 0 && tc <= 0 || sa + ta >= D && sb + tb >= D && sc + tc >= D;
+};
+
+const testTriangleCollision = (a1, a2, a3, b1, b2, b3) => {
+  return !(testTriangleCollisionSub(a1, a2, a3, b1, b2, b3) || testTriangleCollisionSub(b1, b2, b3, a1, a2, a3));
 };
 
 const getDirectionSign = (a, b) => {
@@ -2557,6 +2704,20 @@ const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
   return Number.NaN;
 };
 
+const lineClosestPointToPoint = (a1, a2, b1, b2, p1, p2) => {
+  const v1 = b1 - a1;
+  const v2 = b2 - a2;
+  const u1 = a1 - p1;
+  const u2 = a2 - p2;
+  const vu = v1 * u1 + v2 * u2;
+  const vv = v1 * v1 + v2 * v2;
+  if (vv === 0) return [a1, a2];
+  let t = -vu / vv;
+  if (t < 0) t = 0;
+  if (t > 1) t = 1;
+  return lerp2D([a1, a2], t, [b1, b2]);
+};
+
 const closestSynchroDistance = (a1, a2, b1, b2) => {
   const A = a1[0] - b1[0];
   const B = a2[0] - a1[0] - (b2[0] - b1[0]);
@@ -2574,15 +2735,17 @@ const wrapRadianAngle = angle => {
   return (angle + Math.PI) % (2 * Math.PI) - Math.PI;
 };
 
-const getPlanetAngleMultiplier = (orient, vel) => {
-  let diff = Math.abs((orient - vel + Math.PI) % (2 * Math.PI));
+const getPlanetDamageMultiplier = (ox, oy, px, py) => {
+  [ox, oy] = normalize(ox, oy);
+  [px, py] = normalize(px, py);
+  return maths.padFromBelow(0.5, (1 - (ox * px + oy * py)) * 0.5);
+};
 
-  if (Math.abs(diff) > Math.PI) {
-    diff = 2 * Math.PI - Math.PI;
-  }
-
-  const sc = diff / Math.PI;
-  return 1 + sc;
+const getPlanetDamageSpeedMultiplier = (vx, vy, px, py) => {
+  if (!(vx || vy)) return 0;
+  [vx, vy] = normalize(vx, vy);
+  [px, py] = normalize(px, py);
+  return maths.padFromBelow(0.5, Math.abs(vx * px + vy * py));
 };
 
 const withinBoundingSquare = (x, y, center, d) => {
@@ -2594,45 +2757,57 @@ const rotatePoint = (s, c, x, y) => [x * c - y * s, x * s + y * c];
 const rotatePointOffset = (s, c, x, y, xo, yo) => [xo + x * c - y * s, yo + x * s + y * c];
 
 const getShipPoints = ship => {
+  const S = SHIP_SCALE;
+
   if (!ship) {
     return [];
   }
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, +2, ship.posX, ship.posY), rotatePointOffset(s, c, +1.5, -2, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -1.25, ship.posX, ship.posY), rotatePointOffset(s, c, -1.5, -2, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0 * S, +2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.5 * S, -2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, 0 * S, -1.25 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.5 * S, -2 * S, ship.posX, ship.posY)];
 };
 
 const getCollisionPoints = ship => {
+  const S = SHIP_SCALE;
+
   if (!ship) {
     return [];
   }
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, +2.6, ship.posX, ship.posY), rotatePointOffset(s, c, +1.87, -2.6, ship.posX, ship.posY), rotatePointOffset(s, c, -1.87, -2.6, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0 * S, +2.6 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.87 * S, -2.6 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.87 * S, -2.6 * S, ship.posX, ship.posY)];
 };
 
 const getThrusterPoints = ship => {
+  const S = SHIP_SCALE;
+
   if (!ship) {
     return [];
   }
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0, -1.25, ship.posX, ship.posY), rotatePointOffset(s, c, +0.75, -1.75, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -3.75, ship.posX, ship.posY), rotatePointOffset(s, c, -0.75, -1.75, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -2.75, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0 * S, -1.25 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +0.75 * S, -1.75 * S, ship.posX, ship.posY), rotatePointOffset(s, c, 0 * S, -3.75 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -0.75 * S, -1.75 * S, ship.posX, ship.posY), rotatePointOffset(s, c, 0 * S, -2.75 * S, ship.posX, ship.posY)];
 };
 
 module.exports = {
+  lerp1D,
+  lerp2D,
+  normalize,
   pointInTriangle,
   rotatePoint,
+  testTriangleCollision,
   lineIntersectsLine,
   lineIntersectCircleFirstDepth,
+  lineClosestPointToPoint,
   closestSynchroDistance,
   lineIntersectsTriangle,
   wrapRadianAngle,
   withinBoundingSquare,
-  getPlanetAngleMultiplier,
+  getPlanetDamageMultiplier,
+  getPlanetDamageSpeedMultiplier,
   getShipPoints,
   getCollisionPoints,
   getThrusterPoints
@@ -2693,8 +2868,14 @@ const randomSign = () => {
   return 2 * (2 * Math.random() | 0) - 1;
 };
 
+const squarePair = (x, y) => x ** 2 + y ** 2;
+
+const padFromBelow = (p, v) => p + (1 - p) * v;
+
 module.exports = {
-  randomSign
+  randomSign,
+  squarePair,
+  padFromBelow
 };
 
 /***/ }),
@@ -2704,6 +2885,8 @@ module.exports = {
   !*** ./src/utils/serial.js ***!
   \*****************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+const msgpackr = __webpack_require__(/*! msgpackr */ "./node_modules/msgpackr/index.js");
 
 const shipFields = (__webpack_require__(/*! ../game/ship */ "./src/game/ship.js").fields);
 
@@ -2766,252 +2949,171 @@ const C_minexpl = 138;
 const C_deathk = 139;
 const C_deathc = 140;
 const C_deathp = 141;
+const C_addpups = 142;
 const C_crashed = 192;
 const C_killed = 193;
 const C_hitpl = 194;
-const keyDictionary = {
-  'cmd': 0,
-  'token': 1,
-  'you': 2,
-  'ships': 3,
-  'projs': 4,
-  'count': 5,
-  'rubber': 6,
-  'seed': 7,
-  'board': 8,
-  'ship': 9,
-  'proj': 10,
-  'orient': 11,
-  'nick': 12,
-  'perk': 13,
-  'time': 14,
-  'angle': 15,
-  'accel': 16,
-  'brake': 17,
-  'firing': 18,
-  'powerup': 19,
-  'by': 20
-};
-const reverseKeyDictionary = {};
 
-for (const key of Object.keys(keyDictionary)) {
-  reverseKeyDictionary[keyDictionary[key]] = key;
-}
-
-const encodeKeys = data => {
-  const result = {};
-
-  for (const key of Object.keys(data)) {
-    const encoded = keyDictionary[key];
-    if (encoded === undefined) result[key] = data[key];else result[encoded] = data[key];
-  }
-
-  return result;
+const encode = (cmd, data) => {
+  return msgpackr.pack([cmd, ...messageKeys[cmd].map(key => data[key])]);
 };
 
-const decodeKeys = data => {
-  const result = {};
-
-  for (const key of Object.keys(data)) {
-    const decoded = reverseKeyDictionary[key];
-    if (decoded === undefined) result[key] = data[key];else result[decoded] = data[key];
-  }
-
-  return result;
+const decode = data => {
+  const array = msgpackr.unpack(data);
+  const cmd = array[0];
+  return [cmd, Object.fromEntries(messageKeys[cmd].map((key, index) => [key, array[index + 1]]))];
 };
-
-const encode = data => JSON.stringify(encodeKeys(data));
-
-const decode = data => decodeKeys(JSON.parse(data));
 
 const recv = data => data;
 
-const send = (ws, data) => ws.send(data); // token: string
+const send = (ws, data) => ws.send(data);
+
+const messageKeys = {
+  [C_token]: ['token'],
+  [C_data]: ['you', 'ships', 'projs', 'count', 'rubber', 'seed'],
+  [C_unauth]: [],
+  [C_board]: ['board'],
+  [C_killship]: ['ship'],
+  [C_killproj]: ['proj'],
+  [C_crashed]: ['ship'],
+  [C_killed]: ['ship'],
+  [C_orient]: ['orient'],
+  [C_hitpl]: [],
+  [C_join]: ['nick', 'perk'],
+  [C_ping]: ['time'],
+  [C_pong]: ['time'],
+  [C_quit]: ['token'],
+  [C_ctrl]: ['token', 'orient', 'accel', 'brake', 'firing'],
+  [C_addpup]: ['powerup'],
+  [C_delpup]: ['powerup'],
+  [C_useitem]: ['token'],
+  [C_minexpl]: ['proj'],
+  [C_deathk]: ['ship', 'by'],
+  [C_deathc]: ['ship', 'by'],
+  [C_deathp]: ['ship'],
+  [C_addpups]: ['powerups']
+}; // token: string
+
+const e_token = token => encode(C_token, {
+  token
+}); // you: Ship, ship: Ship[], projs: Bullet[],
+// count: number, rubber: number, seed: number
 
 
-const e_token = token => encode({
-  cmd: C_token,
-  token: token
-}); // ship: Ship, nearbyShips: Ship[], addBullets: Bullet[],
-// playerCount: number, rubberRadius: number, planetSeed: number
-
-
-const e_data = (ship, nearbyShips, addBullets, playerCount, rubberRadius, planetSeed) => encode({
-  cmd: C_data,
-  you: serializeShip(ship),
-  ships: nearbyShips.map(serializeShip),
-  projs: addBullets.map(serializeBullet),
-  count: playerCount,
-  rubber: rubberRadius,
-  seed: planetSeed
+const e_data = (you, ships, projs, count, rubber, seed) => encode(C_data, {
+  you: serializeShip(you),
+  ships: ships.map(serializeShip),
+  projs: projs.map(serializeBullet),
+  count,
+  rubber,
+  seed
 });
 
-const e_unauth = () => encode({
-  cmd: C_unauth
-}); // board: [[name, score], ...]
+const e_unauth = () => encode(C_unauth); // board: [[name, score], ...]
 
 
-const e_board = b => encode({
-  cmd: C_board,
-  board: b
-}); // shipId: string
+const e_board = board => encode(C_board, {
+  board
+}); // ship: ship
 
 
-const e_killship = shipId => encode({
-  cmd: C_killship,
-  ship: shipId
-}); // projId: string
+const e_killship = ship => encode(C_killship, {
+  ship: serializeShip(ship)
+}); // proj: string (id)
 
 
-const e_killproj = projId => encode({
-  cmd: C_killproj,
-  proj: projId
-}); // name: string
+const e_killproj = proj => encode(C_killproj, {
+  proj
+}); // name: string (name)
 
 
-const e_crashed = name => encode({
-  cmd: C_crashed,
-  ship: name
-}); // name: string
+const e_crashed = ship => encode(C_crashed, {
+  ship
+}); // name: string (name)
 
 
-const e_killed = name => encode({
-  cmd: C_killed,
-  ship: name
+const e_killed = ship => encode(C_killed, {
+  ship
 }); // orient: number
 
 
-const e_orient = orient => encode({
-  cmd: C_orient,
-  orient: orient
+const e_orient = orient => encode(C_orient, {
+  orient
 });
 
-const e_hitpl = () => encode({
-  cmd: C_hitpl
-}); // join: string, perk: string
+const e_hitpl = () => encode(C_hitpl); // join: string, perk: string
 
 
-const e_join = (nick, perk) => encode({
-  cmd: C_join,
-  nick: nick,
-  perk: perk
+const e_join = (nick, perk) => encode(C_join, {
+  nick,
+  perk
 }); // time: number
 
 
-const e_ping = time => encode({
-  cmd: C_ping,
-  time: time
+const e_ping = time => encode(C_ping, {
+  time
 }); // time: number
 
 
-const e_pong = time => encode({
-  cmd: C_pong,
-  time: time
+const e_pong = time => encode(C_pong, {
+  time
 }); // token: string
 
 
-const e_quit = token => encode({
-  cmd: C_quit,
-  token: token
+const e_quit = token => encode(C_quit, {
+  token
 }); // token: string, orient: number, accel: boolean, brake: boolean, firing: boolean
 
 
-const e_ctrl = (token, orient, accel, brake, firing) => encode({
-  cmd: C_ctrl,
-  token: token,
-  angle: orient,
-  accel: accel,
-  brake: brake,
-  firing: firing
+const e_ctrl = (token, orient, accel, brake, firing) => encode(C_ctrl, {
+  token,
+  orient,
+  accel,
+  brake,
+  firing
 }); // powerup: Powerup
 
 
-const e_addpup = powerup => encode({
-  cmd: C_addpup,
+const e_addpup = powerup => encode(C_addpup, {
   powerup: serializePowerup(powerup)
-}); // id: string
+}); // powerup: (ID) string
 
 
-const e_delpup = id => encode({
-  cmd: C_delpup,
-  powerup: id
+const e_delpup = powerup => encode(C_delpup, {
+  powerup
 }); // token: string
 
 
-const e_useitem = token => encode({
-  cmd: C_useitem,
-  token: token
-}); // mine: Bullet
+const e_useitem = token => encode(C_useitem, {
+  token
+}); // proj: Bullet
 
 
-const e_minexpl = mine => encode({
-  cmd: C_minexpl,
-  proj: serializeBullet(mine)
+const e_minexpl = proj => encode(C_minexpl, {
+  proj: serializeBullet(proj)
 }); // ship: string, by: string
 
 
-const e_deathk = (ship, by) => encode({
-  cmd: C_deathk,
+const e_deathk = (ship, by) => encode(C_deathk, {
   ship,
   by
 }); // ship: string, by: string
 
 
-const e_deathc = (ship, by) => encode({
-  cmd: C_deathc,
+const e_deathc = (ship, by) => encode(C_deathc, {
   ship,
   by
 }); // ship: string, by: string
 
 
-const e_deathp = ship => encode({
-  cmd: C_deathp,
+const e_deathp = ship => encode(C_deathp, {
   ship
+}); // powerups: Powerup[]
+
+
+const e_addpups = powerups => encode(C_addpups, {
+  powerups: powerups.map(serializePowerup)
 });
-
-const is_ctrl = obj => obj.cmd === C_ctrl;
-
-const is_join = obj => obj.cmd === C_join;
-
-const is_ping = obj => obj.cmd === C_ping;
-
-const is_pong = obj => obj.cmd === C_pong;
-
-const is_quit = obj => obj.cmd === C_quit;
-
-const is_token = obj => obj.cmd === C_token;
-
-const is_data = obj => obj.cmd === C_data;
-
-const is_board = obj => obj.cmd === C_board;
-
-const is_killship = obj => obj.cmd === C_killship;
-
-const is_killproj = obj => obj.cmd === C_killproj;
-
-const is_crashed = obj => obj.cmd == C_crashed;
-
-const is_killed = obj => obj.cmd == C_killed;
-
-const is_hitpl = obj => obj.cmd == C_hitpl;
-
-const is_orient = obj => obj.cmd == C_orient;
-
-const is_unauth = obj => obj.cmd == C_unauth;
-
-const is_addpup = obj => obj.cmd == C_addpup;
-
-const is_delpup = obj => obj.cmd == C_delpup;
-
-const is_useitem = obj => obj.cmd == C_useitem;
-
-const is_minexpl = obj => obj.cmd == C_minexpl;
-
-const is_deathk = obj => obj.cmd == C_deathk;
-
-const is_deathc = obj => obj.cmd == C_deathc;
-
-const is_deathp = obj => obj.cmd == C_deathp;
 
 module.exports = {
   encode,
@@ -3040,34 +3142,2534 @@ module.exports = {
   e_deathk,
   e_deathc,
   e_deathp,
-  is_ctrl,
-  is_join,
-  is_ping,
-  is_pong,
-  is_quit,
-  is_token,
-  is_data,
-  is_board,
-  is_killship,
-  is_killproj,
-  is_crashed,
-  is_killed,
-  is_hitpl,
-  is_orient,
-  is_unauth,
-  is_addpup,
-  is_delpup,
-  is_useitem,
-  is_minexpl,
-  is_deathk,
-  is_deathc,
-  is_deathp,
+  e_addpups,
+  C_ctrl,
+  C_join,
+  C_ping,
+  C_pong,
+  C_quit,
+  C_token,
+  C_data,
+  C_board,
+  C_killship,
+  C_killproj,
+  C_crashed,
+  C_killed,
+  C_hitpl,
+  C_orient,
+  C_unauth,
+  C_addpup,
+  C_delpup,
+  C_useitem,
+  C_minexpl,
+  C_deathk,
+  C_deathc,
+  C_deathp,
+  C_addpups,
   serializeFrom,
   deserializeFrom,
   deserializeShip,
   deserializeBullet,
   deserializePowerup
 };
+
+/***/ }),
+
+/***/ "./node_modules/msgpackr/index.js":
+/*!****************************************!*\
+  !*** ./node_modules/msgpackr/index.js ***!
+  \****************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "ALWAYS": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.ALWAYS),
+/* harmony export */   "C1": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.C1),
+/* harmony export */   "DECIMAL_FIT": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.DECIMAL_FIT),
+/* harmony export */   "DECIMAL_ROUND": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.DECIMAL_ROUND),
+/* harmony export */   "Decoder": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.Decoder),
+/* harmony export */   "Encoder": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.Encoder),
+/* harmony export */   "FLOAT32_OPTIONS": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.FLOAT32_OPTIONS),
+/* harmony export */   "NEVER": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.NEVER),
+/* harmony export */   "Packr": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.Packr),
+/* harmony export */   "REUSE_BUFFER_MODE": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.REUSE_BUFFER_MODE),
+/* harmony export */   "Unpackr": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.Unpackr),
+/* harmony export */   "addExtension": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.addExtension),
+/* harmony export */   "clearSource": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.clearSource),
+/* harmony export */   "decode": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.decode),
+/* harmony export */   "decodeIter": () => (/* reexport safe */ _iterators_js__WEBPACK_IMPORTED_MODULE_2__.decodeIter),
+/* harmony export */   "encode": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.encode),
+/* harmony export */   "encodeIter": () => (/* reexport safe */ _iterators_js__WEBPACK_IMPORTED_MODULE_2__.encodeIter),
+/* harmony export */   "isNativeAccelerationEnabled": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.isNativeAccelerationEnabled),
+/* harmony export */   "mapsAsObjects": () => (/* binding */ mapsAsObjects),
+/* harmony export */   "pack": () => (/* reexport safe */ _pack_js__WEBPACK_IMPORTED_MODULE_0__.pack),
+/* harmony export */   "roundFloat32": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.roundFloat32),
+/* harmony export */   "unpack": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.unpack),
+/* harmony export */   "unpackMultiple": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_1__.unpackMultiple),
+/* harmony export */   "useRecords": () => (/* binding */ useRecords)
+/* harmony export */ });
+/* harmony import */ var _pack_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./pack.js */ "./node_modules/msgpackr/pack.js");
+/* harmony import */ var _unpack_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./unpack.js */ "./node_modules/msgpackr/unpack.js");
+/* harmony import */ var _iterators_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./iterators.js */ "./node_modules/msgpackr/iterators.js");
+
+
+
+const useRecords = false;
+const mapsAsObjects = true;
+
+/***/ }),
+
+/***/ "./node_modules/msgpackr/iterators.js":
+/*!********************************************!*\
+  !*** ./node_modules/msgpackr/iterators.js ***!
+  \********************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "decodeIter": () => (/* binding */ decodeIter),
+/* harmony export */   "encodeIter": () => (/* binding */ encodeIter),
+/* harmony export */   "packIter": () => (/* binding */ packIter),
+/* harmony export */   "unpackIter": () => (/* binding */ unpackIter)
+/* harmony export */ });
+/* harmony import */ var _pack_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./pack.js */ "./node_modules/msgpackr/pack.js");
+/* harmony import */ var _unpack_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./unpack.js */ "./node_modules/msgpackr/unpack.js");
+
+
+/**
+ * Given an Iterable first argument, returns an Iterable where each value is packed as a Buffer
+ * If the argument is only Async Iterable, the return value will be an Async Iterable.
+ * @param {Iterable|Iterator|AsyncIterable|AsyncIterator} objectIterator - iterable source, like a Readable object stream, an array, Set, or custom object
+ * @param {options} [options] - msgpackr pack options
+ * @returns {IterableIterator|Promise.<AsyncIterableIterator>}
+ */
+
+function packIter(objectIterator, options = {}) {
+  if (!objectIterator || typeof objectIterator !== 'object') {
+    throw new Error('first argument must be an Iterable, Async Iterable, or a Promise for an Async Iterable');
+  } else if (typeof objectIterator[Symbol.iterator] === 'function') {
+    return packIterSync(objectIterator, options);
+  } else if (typeof objectIterator.then === 'function' || typeof objectIterator[Symbol.asyncIterator] === 'function') {
+    return packIterAsync(objectIterator, options);
+  } else {
+    throw new Error('first argument must be an Iterable, Async Iterable, Iterator, Async Iterator, or a Promise');
+  }
+}
+
+function* packIterSync(objectIterator, options) {
+  const packr = new _pack_js__WEBPACK_IMPORTED_MODULE_0__.Packr(options);
+
+  for (const value of objectIterator) {
+    yield packr.pack(value);
+  }
+}
+
+async function* packIterAsync(objectIterator, options) {
+  const packr = new _pack_js__WEBPACK_IMPORTED_MODULE_0__.Packr(options);
+
+  for await (const value of objectIterator) {
+    yield packr.pack(value);
+  }
+}
+/**
+ * Given an Iterable/Iterator input which yields buffers, returns an IterableIterator which yields sync decoded objects
+ * Or, given an Async Iterable/Iterator which yields promises resolving in buffers, returns an AsyncIterableIterator.
+ * @param {Iterable|Iterator|AsyncIterable|AsyncIterableIterator} bufferIterator
+ * @param {object} [options] - unpackr options
+ * @returns {IterableIterator|Promise.<AsyncIterableIterator}
+ */
+
+
+function unpackIter(bufferIterator, options = {}) {
+  if (!bufferIterator || typeof bufferIterator !== 'object') {
+    throw new Error('first argument must be an Iterable, Async Iterable, Iterator, Async Iterator, or a promise');
+  }
+
+  const unpackr = new _unpack_js__WEBPACK_IMPORTED_MODULE_1__.Unpackr(options);
+  let incomplete;
+
+  const parser = chunk => {
+    let yields; // if there's incomplete data from previous chunk, concatinate and try again
+
+    if (incomplete) {
+      chunk = Buffer.concat([incomplete, chunk]);
+      incomplete = undefined;
+    }
+
+    try {
+      yields = unpackr.unpackMultiple(chunk);
+    } catch (err) {
+      if (err.incomplete) {
+        incomplete = chunk.slice(err.lastPosition);
+        yields = err.values;
+      } else {
+        throw err;
+      }
+    }
+
+    return yields;
+  };
+
+  if (typeof bufferIterator[Symbol.iterator] === 'function') {
+    return function* iter() {
+      for (const value of bufferIterator) {
+        yield* parser(value);
+      }
+    }();
+  } else if (typeof bufferIterator[Symbol.asyncIterator] === 'function') {
+    return async function* iter() {
+      for await (const value of bufferIterator) {
+        yield* parser(value);
+      }
+    }();
+  }
+}
+const decodeIter = unpackIter;
+const encodeIter = packIter;
+
+/***/ }),
+
+/***/ "./node_modules/msgpackr/pack.js":
+/*!***************************************!*\
+  !*** ./node_modules/msgpackr/pack.js ***!
+  \***************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "ALWAYS": () => (/* binding */ ALWAYS),
+/* harmony export */   "DECIMAL_FIT": () => (/* binding */ DECIMAL_FIT),
+/* harmony export */   "DECIMAL_ROUND": () => (/* binding */ DECIMAL_ROUND),
+/* harmony export */   "Encoder": () => (/* binding */ Encoder),
+/* harmony export */   "FLOAT32_OPTIONS": () => (/* reexport safe */ _unpack_js__WEBPACK_IMPORTED_MODULE_0__.FLOAT32_OPTIONS),
+/* harmony export */   "NEVER": () => (/* binding */ NEVER),
+/* harmony export */   "Packr": () => (/* binding */ Packr),
+/* harmony export */   "RESET_BUFFER_MODE": () => (/* binding */ RESET_BUFFER_MODE),
+/* harmony export */   "REUSE_BUFFER_MODE": () => (/* binding */ REUSE_BUFFER_MODE),
+/* harmony export */   "addExtension": () => (/* binding */ addExtension),
+/* harmony export */   "encode": () => (/* binding */ encode),
+/* harmony export */   "pack": () => (/* binding */ pack)
+/* harmony export */ });
+/* harmony import */ var _unpack_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./unpack.js */ "./node_modules/msgpackr/unpack.js");
+
+
+
+let textEncoder;
+
+try {
+  textEncoder = new TextEncoder();
+} catch (error) {}
+
+let extensions, extensionClasses;
+const hasNodeBuffer = typeof Buffer !== 'undefined';
+const ByteArrayAllocate = hasNodeBuffer ? Buffer.allocUnsafeSlow : Uint8Array;
+const ByteArray = hasNodeBuffer ? Buffer : Uint8Array;
+const MAX_BUFFER_SIZE = hasNodeBuffer ? 0x100000000 : 0x7fd00000;
+let target, keysTarget;
+let targetView;
+let position = 0;
+let safeEnd;
+let bundledStrings = null;
+const MAX_BUNDLE_SIZE = 0xf000;
+const hasNonLatin = /[\u0080-\uFFFF]/;
+const RECORD_SYMBOL = Symbol('record-id');
+class Packr extends _unpack_js__WEBPACK_IMPORTED_MODULE_0__.Unpackr {
+  constructor(options) {
+    super(options);
+    this.offset = 0;
+    let typeBuffer;
+    let start;
+    let hasSharedUpdate;
+    let structures;
+    let referenceMap;
+    let lastSharedStructuresLength = 0;
+    let encodeUtf8 = ByteArray.prototype.utf8Write ? function (string, position, maxBytes) {
+      return target.utf8Write(string, position, maxBytes);
+    } : textEncoder && textEncoder.encodeInto ? function (string, position) {
+      return textEncoder.encodeInto(string, target.subarray(position)).written;
+    } : false;
+    let packr = this;
+    if (!options) options = {};
+    let isSequential = options && options.sequential;
+    let hasSharedStructures = options.structures || options.saveStructures;
+    let maxSharedStructures = options.maxSharedStructures;
+    if (maxSharedStructures == null) maxSharedStructures = hasSharedStructures ? 32 : 0;
+    if (maxSharedStructures > 8160) throw new Error('Maximum maxSharedStructure is 8160');
+
+    if (options.structuredClone && options.moreTypes == undefined) {
+      options.moreTypes = true;
+    }
+
+    let maxOwnStructures = options.maxOwnStructures;
+    if (maxOwnStructures == null) maxOwnStructures = hasSharedStructures ? 32 : 64;
+    if (!this.structures && options.useRecords != false) this.structures = []; // two byte record ids for shared structures
+
+    let useTwoByteRecords = maxSharedStructures > 32 || maxOwnStructures + maxSharedStructures > 64;
+    let sharedLimitId = maxSharedStructures + 0x40;
+    let maxStructureId = maxSharedStructures + maxOwnStructures + 0x40;
+
+    if (maxStructureId > 8256) {
+      throw new Error('Maximum maxSharedStructure + maxOwnStructure is 8192');
+    }
+
+    let recordIdsToRemove = [];
+    let transitionsCount = 0;
+    let serializationsSinceTransitionRebuild = 0;
+
+    this.pack = this.encode = function (value, encodeOptions) {
+      if (!target) {
+        target = new ByteArrayAllocate(8192);
+        targetView = new DataView(target.buffer, 0, 8192);
+        position = 0;
+      }
+
+      safeEnd = target.length - 10;
+
+      if (safeEnd - position < 0x800) {
+        // don't start too close to the end, 
+        target = new ByteArrayAllocate(target.length);
+        targetView = new DataView(target.buffer, 0, target.length);
+        safeEnd = target.length - 10;
+        position = 0;
+      } else position = position + 7 & 0x7ffffff8; // Word align to make any future copying of this buffer faster
+
+
+      start = position;
+      referenceMap = packr.structuredClone ? new Map() : null;
+
+      if (packr.bundleStrings && typeof value !== 'string') {
+        bundledStrings = [];
+        bundledStrings.size = Infinity; // force a new bundle start on first string
+      } else bundledStrings = null;
+
+      structures = packr.structures;
+
+      if (structures) {
+        if (structures.uninitialized) structures = packr._mergeStructures(packr.getStructures());
+        let sharedLength = structures.sharedLength || 0;
+
+        if (sharedLength > maxSharedStructures) {
+          //if (maxSharedStructures <= 32 && structures.sharedLength > 32) // TODO: could support this, but would need to update the limit ids
+          throw new Error('Shared structures is larger than maximum shared structures, try increasing maxSharedStructures to ' + structures.sharedLength);
+        }
+
+        if (!structures.transitions) {
+          // rebuild our structure transitions
+          structures.transitions = Object.create(null);
+
+          for (let i = 0; i < sharedLength; i++) {
+            let keys = structures[i];
+            if (!keys) continue;
+            let nextTransition,
+                transition = structures.transitions;
+
+            for (let j = 0, l = keys.length; j < l; j++) {
+              let key = keys[j];
+              nextTransition = transition[key];
+
+              if (!nextTransition) {
+                nextTransition = transition[key] = Object.create(null);
+              }
+
+              transition = nextTransition;
+            }
+
+            transition[RECORD_SYMBOL] = i + 0x40;
+          }
+
+          lastSharedStructuresLength = sharedLength;
+        }
+
+        if (!isSequential) {
+          structures.nextId = sharedLength + 0x40;
+        }
+      }
+
+      if (hasSharedUpdate) hasSharedUpdate = false;
+
+      try {
+        pack(value);
+
+        if (bundledStrings) {
+          writeBundles(start, pack);
+        }
+
+        packr.offset = position; // update the offset so next serialization doesn't write over our buffer, but can continue writing to same buffer sequentially
+
+        if (referenceMap && referenceMap.idsToInsert) {
+          position += referenceMap.idsToInsert.length * 6;
+          if (position > safeEnd) makeRoom(position);
+          packr.offset = position;
+          let serialized = insertIds(target.subarray(start, position), referenceMap.idsToInsert);
+          referenceMap = null;
+          return serialized;
+        }
+
+        if (encodeOptions & REUSE_BUFFER_MODE) {
+          target.start = start;
+          target.end = position;
+          return target;
+        }
+
+        return target.subarray(start, position); // position can change if we call pack again in saveStructures, so we get the buffer now
+      } finally {
+        if (structures) {
+          if (serializationsSinceTransitionRebuild < 10) serializationsSinceTransitionRebuild++;
+          let sharedLength = structures.sharedLength || maxSharedStructures;
+          if (structures.length > sharedLength) structures.length = sharedLength;
+
+          if (transitionsCount > 10000) {
+            // force a rebuild occasionally after a lot of transitions so it can get cleaned up
+            structures.transitions = null;
+            serializationsSinceTransitionRebuild = 0;
+            transitionsCount = 0;
+            if (recordIdsToRemove.length > 0) recordIdsToRemove = [];
+          } else if (recordIdsToRemove.length > 0 && !isSequential) {
+            for (let i = 0, l = recordIdsToRemove.length; i < l; i++) {
+              recordIdsToRemove[i][RECORD_SYMBOL] = 0;
+            }
+
+            recordIdsToRemove = [];
+          }
+
+          if (hasSharedUpdate && packr.saveStructures) {
+            // we can't rely on start/end with REUSE_BUFFER_MODE since they will (probably) change when we save
+            let returnBuffer = target.subarray(start, position);
+
+            if (packr.saveStructures(structures, lastSharedStructuresLength) === false) {
+              // get updated structures and try again if the update failed
+              packr._mergeStructures(packr.getStructures());
+
+              return packr.pack(value);
+            }
+
+            lastSharedStructuresLength = sharedLength;
+            return returnBuffer;
+          }
+        }
+
+        if (encodeOptions & RESET_BUFFER_MODE) position = start;
+      }
+    };
+
+    const pack = value => {
+      if (position > safeEnd) target = makeRoom(position);
+      var type = typeof value;
+      var length;
+
+      if (type === 'string') {
+        let strLength = value.length;
+
+        if (bundledStrings && strLength >= 4 && strLength < 0x1000) {
+          if ((bundledStrings.size += strLength) > MAX_BUNDLE_SIZE) {
+            let extStart;
+            let maxBytes = (bundledStrings[0] ? bundledStrings[0].length * 3 + bundledStrings[1].length : 0) + 10;
+            if (position + maxBytes > safeEnd) target = makeRoom(position + maxBytes);
+
+            if (bundledStrings.position) {
+              // here we use the 0x62 extension to write the last bundle and reserve sapce for the reference pointer to the next/current bundle
+              target[position] = 0xc8; // ext 16
+
+              position += 3; // reserve for the writing bundle size
+
+              target[position++] = 0x62; // 'b'
+
+              extStart = position - start;
+              position += 4; // reserve for writing bundle reference
+
+              writeBundles(start, pack); // write the last bundles
+
+              targetView.setUint16(extStart + start - 3, position - start - extStart);
+            } else {
+              // here we use the 0x62 extension just to reserve the space for the reference pointer to the bundle (will be updated once the bundle is written)
+              target[position++] = 0xd6; // fixext 4
+
+              target[position++] = 0x62; // 'b'
+
+              extStart = position - start;
+              position += 4; // reserve for writing bundle reference
+            }
+
+            bundledStrings = ['', '']; // create new ones
+
+            bundledStrings.size = 0;
+            bundledStrings.position = extStart;
+          }
+
+          let twoByte = hasNonLatin.test(value);
+          bundledStrings[twoByte ? 0 : 1] += value;
+          target[position++] = 0xc1;
+          pack(twoByte ? -strLength : strLength);
+          return;
+        }
+
+        let headerSize; // first we estimate the header size, so we can write to the correct location
+
+        if (strLength < 0x20) {
+          headerSize = 1;
+        } else if (strLength < 0x100) {
+          headerSize = 2;
+        } else if (strLength < 0x10000) {
+          headerSize = 3;
+        } else {
+          headerSize = 5;
+        }
+
+        let maxBytes = strLength * 3;
+        if (position + maxBytes > safeEnd) target = makeRoom(position + maxBytes);
+
+        if (strLength < 0x40 || !encodeUtf8) {
+          let i,
+              c1,
+              c2,
+              strPosition = position + headerSize;
+
+          for (i = 0; i < strLength; i++) {
+            c1 = value.charCodeAt(i);
+
+            if (c1 < 0x80) {
+              target[strPosition++] = c1;
+            } else if (c1 < 0x800) {
+              target[strPosition++] = c1 >> 6 | 0xc0;
+              target[strPosition++] = c1 & 0x3f | 0x80;
+            } else if ((c1 & 0xfc00) === 0xd800 && ((c2 = value.charCodeAt(i + 1)) & 0xfc00) === 0xdc00) {
+              c1 = 0x10000 + ((c1 & 0x03ff) << 10) + (c2 & 0x03ff);
+              i++;
+              target[strPosition++] = c1 >> 18 | 0xf0;
+              target[strPosition++] = c1 >> 12 & 0x3f | 0x80;
+              target[strPosition++] = c1 >> 6 & 0x3f | 0x80;
+              target[strPosition++] = c1 & 0x3f | 0x80;
+            } else {
+              target[strPosition++] = c1 >> 12 | 0xe0;
+              target[strPosition++] = c1 >> 6 & 0x3f | 0x80;
+              target[strPosition++] = c1 & 0x3f | 0x80;
+            }
+          }
+
+          length = strPosition - position - headerSize;
+        } else {
+          length = encodeUtf8(value, position + headerSize, maxBytes);
+        }
+
+        if (length < 0x20) {
+          target[position++] = 0xa0 | length;
+        } else if (length < 0x100) {
+          if (headerSize < 2) {
+            target.copyWithin(position + 2, position + 1, position + 1 + length);
+          }
+
+          target[position++] = 0xd9;
+          target[position++] = length;
+        } else if (length < 0x10000) {
+          if (headerSize < 3) {
+            target.copyWithin(position + 3, position + 2, position + 2 + length);
+          }
+
+          target[position++] = 0xda;
+          target[position++] = length >> 8;
+          target[position++] = length & 0xff;
+        } else {
+          if (headerSize < 5) {
+            target.copyWithin(position + 5, position + 3, position + 3 + length);
+          }
+
+          target[position++] = 0xdb;
+          targetView.setUint32(position, length);
+          position += 4;
+        }
+
+        position += length;
+      } else if (type === 'number') {
+        if (value >>> 0 === value) {
+          // positive integer, 32-bit or less
+          // positive uint
+          if (value < 0x40) {
+            target[position++] = value;
+          } else if (value < 0x100) {
+            target[position++] = 0xcc;
+            target[position++] = value;
+          } else if (value < 0x10000) {
+            target[position++] = 0xcd;
+            target[position++] = value >> 8;
+            target[position++] = value & 0xff;
+          } else {
+            target[position++] = 0xce;
+            targetView.setUint32(position, value);
+            position += 4;
+          }
+        } else if (value >> 0 === value) {
+          // negative integer
+          if (value >= -0x20) {
+            target[position++] = 0x100 + value;
+          } else if (value >= -0x80) {
+            target[position++] = 0xd0;
+            target[position++] = value + 0x100;
+          } else if (value >= -0x8000) {
+            target[position++] = 0xd1;
+            targetView.setInt16(position, value);
+            position += 2;
+          } else {
+            target[position++] = 0xd2;
+            targetView.setInt32(position, value);
+            position += 4;
+          }
+        } else {
+          let useFloat32;
+
+          if ((useFloat32 = this.useFloat32) > 0 && value < 0x100000000 && value >= -0x80000000) {
+            target[position++] = 0xca;
+            targetView.setFloat32(position, value);
+            let xShifted;
+
+            if (useFloat32 < 4 || // this checks for rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
+            (xShifted = value * _unpack_js__WEBPACK_IMPORTED_MODULE_0__.mult10[(target[position] & 0x7f) << 1 | target[position + 1] >> 7]) >> 0 === xShifted) {
+              position += 4;
+              return;
+            } else position--; // move back into position for writing a double
+
+          }
+
+          target[position++] = 0xcb;
+          targetView.setFloat64(position, value);
+          position += 8;
+        }
+      } else if (type === 'object') {
+        if (!value) target[position++] = 0xc0;else {
+          if (referenceMap) {
+            let referee = referenceMap.get(value);
+
+            if (referee) {
+              if (!referee.id) {
+                let idsToInsert = referenceMap.idsToInsert || (referenceMap.idsToInsert = []);
+                referee.id = idsToInsert.push(referee);
+              }
+
+              target[position++] = 0xd6; // fixext 4
+
+              target[position++] = 0x70; // "p" for pointer
+
+              targetView.setUint32(position, referee.id);
+              position += 4;
+              return;
+            } else referenceMap.set(value, {
+              offset: position - start
+            });
+          }
+
+          let constructor = value.constructor;
+
+          if (constructor === Object) {
+            writeObject(value, true);
+          } else if (constructor === Array) {
+            length = value.length;
+
+            if (length < 0x10) {
+              target[position++] = 0x90 | length;
+            } else if (length < 0x10000) {
+              target[position++] = 0xdc;
+              target[position++] = length >> 8;
+              target[position++] = length & 0xff;
+            } else {
+              target[position++] = 0xdd;
+              targetView.setUint32(position, length);
+              position += 4;
+            }
+
+            for (let i = 0; i < length; i++) {
+              pack(value[i]);
+            }
+          } else if (constructor === Map) {
+            length = value.size;
+
+            if (length < 0x10) {
+              target[position++] = 0x80 | length;
+            } else if (length < 0x10000) {
+              target[position++] = 0xde;
+              target[position++] = length >> 8;
+              target[position++] = length & 0xff;
+            } else {
+              target[position++] = 0xdf;
+              targetView.setUint32(position, length);
+              position += 4;
+            }
+
+            for (let [key, entryValue] of value) {
+              pack(key);
+              pack(entryValue);
+            }
+          } else {
+            for (let i = 0, l = extensions.length; i < l; i++) {
+              let extensionClass = extensionClasses[i];
+
+              if (value instanceof extensionClass) {
+                let extension = extensions[i];
+
+                if (extension.write) {
+                  if (extension.type) {
+                    target[position++] = 0xd4; // one byte "tag" extension
+
+                    target[position++] = extension.type;
+                    target[position++] = 0;
+                  }
+
+                  pack(extension.write.call(this, value));
+                  return;
+                }
+
+                let currentTarget = target;
+                let currentTargetView = targetView;
+                let currentPosition = position;
+                target = null;
+                let result;
+
+                try {
+                  result = extension.pack.call(this, value, size => {
+                    // restore target and use it
+                    target = currentTarget;
+                    currentTarget = null;
+                    position += size;
+                    if (position > safeEnd) makeRoom(position);
+                    return {
+                      target,
+                      targetView,
+                      position: position - size
+                    };
+                  }, pack);
+                } finally {
+                  // restore current target information (unless already restored)
+                  if (currentTarget) {
+                    target = currentTarget;
+                    targetView = currentTargetView;
+                    position = currentPosition;
+                    safeEnd = target.length - 10;
+                  }
+                }
+
+                if (result) {
+                  if (result.length + position > safeEnd) makeRoom(result.length + position);
+                  position = writeExtensionData(result, target, position, extension.type);
+                }
+
+                return;
+              }
+            } // no extension found, write as object
+
+
+            writeObject(value, !value.hasOwnProperty); // if it doesn't have hasOwnProperty, don't do hasOwnProperty checks
+          }
+        }
+      } else if (type === 'boolean') {
+        target[position++] = value ? 0xc3 : 0xc2;
+      } else if (type === 'bigint') {
+        if (value < BigInt(1) << BigInt(63) && value >= -(BigInt(1) << BigInt(63))) {
+          // use a signed int as long as it fits
+          target[position++] = 0xd3;
+          targetView.setBigInt64(position, value);
+        } else if (value < BigInt(1) << BigInt(64) && value > 0) {
+          // if we can fit an unsigned int, use that
+          target[position++] = 0xcf;
+          targetView.setBigUint64(position, value);
+        } else {
+          // overflow
+          if (this.largeBigIntToFloat) {
+            target[position++] = 0xcb;
+            targetView.setFloat64(position, Number(value));
+          } else {
+            throw new RangeError(value + ' was too large to fit in MessagePack 64-bit integer format, set largeBigIntToFloat to convert to float-64');
+          }
+        }
+
+        position += 8;
+      } else if (type === 'undefined') {
+        if (this.encodeUndefinedAsNil) target[position++] = 0xc0;else {
+          target[position++] = 0xd4; // a number of implementations use fixext1 with type 0, data 0 to denote undefined, so we follow suite
+
+          target[position++] = 0;
+          target[position++] = 0;
+        }
+      } else if (type === 'function') {
+        pack(this.writeFunction && this.writeFunction()); // if there is a writeFunction, use it, otherwise just encode as undefined
+      } else {
+        throw new Error('Unknown type: ' + type);
+      }
+    };
+
+    const writeObject = this.useRecords === false ? this.variableMapSize ? object => {
+      // this method is slightly slower, but generates "preferred serialization" (optimally small for smaller objects)
+      let keys = Object.keys(object);
+      let length = keys.length;
+
+      if (length < 0x10) {
+        target[position++] = 0x80 | length;
+      } else if (length < 0x10000) {
+        target[position++] = 0xde;
+        target[position++] = length >> 8;
+        target[position++] = length & 0xff;
+      } else {
+        target[position++] = 0xdf;
+        targetView.setUint32(position, length);
+        position += 4;
+      }
+
+      let key;
+
+      for (let i = 0; i < length; i++) {
+        pack(key = keys[i]);
+        pack(object[key]);
+      }
+    } : (object, safePrototype) => {
+      target[position++] = 0xde; // always using map 16, so we can preallocate and set the length afterwards
+
+      let objectOffset = position - start;
+      position += 2;
+      let size = 0;
+
+      for (let key in object) {
+        if (safePrototype || object.hasOwnProperty(key)) {
+          pack(key);
+          pack(object[key]);
+          size++;
+        }
+      }
+
+      target[objectOffset++ + start] = size >> 8;
+      target[objectOffset + start] = size & 0xff;
+    } : options.progressiveRecords && !useTwoByteRecords ? // this is about 2% faster for highly stable structures, since it only requires one for-in loop (but much more expensive when new structure needs to be written)
+    (object, safePrototype) => {
+      let nextTransition,
+          transition = structures.transitions || (structures.transitions = Object.create(null));
+      let objectOffset = position++ - start;
+      let wroteKeys;
+
+      for (let key in object) {
+        if (safePrototype || object.hasOwnProperty(key)) {
+          nextTransition = transition[key];
+          if (nextTransition) transition = nextTransition;else {
+            // record doesn't exist, create full new record and insert it
+            let keys = Object.keys(object);
+            let lastTransition = transition;
+            transition = structures.transitions;
+            let newTransitions = 0;
+
+            for (let i = 0, l = keys.length; i < l; i++) {
+              let key = keys[i];
+              nextTransition = transition[key];
+
+              if (!nextTransition) {
+                nextTransition = transition[key] = Object.create(null);
+                newTransitions++;
+              }
+
+              transition = nextTransition;
+            }
+
+            if (objectOffset + start + 1 == position) {
+              // first key, so we don't need to insert, we can just write record directly
+              position--;
+              newRecord(transition, keys, newTransitions);
+            } else // otherwise we need to insert the record, moving existing data after the record
+              insertNewRecord(transition, keys, objectOffset, newTransitions);
+
+            wroteKeys = true;
+            transition = lastTransition[key];
+          }
+          pack(object[key]);
+        }
+      }
+
+      if (!wroteKeys) {
+        let recordId = transition[RECORD_SYMBOL];
+        if (recordId) target[objectOffset + start] = recordId;else insertNewRecord(transition, Object.keys(object), objectOffset, 0);
+      }
+    } : (object, safePrototype) => {
+      let nextTransition,
+          transition = structures.transitions || (structures.transitions = Object.create(null));
+      let newTransitions = 0;
+
+      for (let key in object) if (safePrototype || object.hasOwnProperty(key)) {
+        nextTransition = transition[key];
+
+        if (!nextTransition) {
+          nextTransition = transition[key] = Object.create(null);
+          newTransitions++;
+        }
+
+        transition = nextTransition;
+      }
+
+      let recordId = transition[RECORD_SYMBOL];
+
+      if (recordId) {
+        if (recordId >= 0x60 && useTwoByteRecords) {
+          target[position++] = ((recordId -= 0x60) & 0x1f) + 0x60;
+          target[position++] = recordId >> 5;
+        } else target[position++] = recordId;
+      } else {
+        newRecord(transition, transition.__keys__ || Object.keys(object), newTransitions);
+      } // now write the values
+
+
+      for (let key in object) if (safePrototype || object.hasOwnProperty(key)) pack(object[key]);
+    };
+
+    const makeRoom = end => {
+      let newSize;
+
+      if (end > 0x1000000) {
+        // special handling for really large buffers
+        if (end - start > MAX_BUFFER_SIZE) throw new Error('Packed buffer would be larger than maximum buffer size');
+        newSize = Math.min(MAX_BUFFER_SIZE, Math.round(Math.max((end - start) * (end > 0x4000000 ? 1.25 : 2), 0x400000) / 0x1000) * 0x1000);
+      } else // faster handling for smaller buffers
+        newSize = (Math.max(end - start << 2, target.length - 1) >> 12) + 1 << 12;
+
+      let newBuffer = new ByteArrayAllocate(newSize);
+      targetView = new DataView(newBuffer.buffer, 0, newSize);
+      if (target.copy) target.copy(newBuffer, 0, start, end);else newBuffer.set(target.slice(start, end));
+      position -= start;
+      start = 0;
+      safeEnd = newBuffer.length - 10;
+      return target = newBuffer;
+    };
+
+    const newRecord = (transition, keys, newTransitions) => {
+      let recordId = structures.nextId;
+      if (!recordId) recordId = 0x40;
+
+      if (recordId < sharedLimitId && this.shouldShareStructure && !this.shouldShareStructure(keys)) {
+        recordId = structures.nextOwnId;
+        if (!(recordId < maxStructureId)) recordId = sharedLimitId;
+        structures.nextOwnId = recordId + 1;
+      } else {
+        if (recordId >= maxStructureId) // cycle back around
+          recordId = sharedLimitId;
+        structures.nextId = recordId + 1;
+      }
+
+      let highByte = keys.highByte = recordId >= 0x60 && useTwoByteRecords ? recordId - 0x60 >> 5 : -1;
+      transition[RECORD_SYMBOL] = recordId;
+      transition.__keys__ = keys;
+      structures[recordId - 0x40] = keys;
+
+      if (recordId < sharedLimitId) {
+        keys.isShared = true;
+        structures.sharedLength = recordId - 0x3f;
+        hasSharedUpdate = true;
+
+        if (highByte >= 0) {
+          target[position++] = (recordId & 0x1f) + 0x60;
+          target[position++] = highByte;
+        } else {
+          target[position++] = recordId;
+        }
+      } else {
+        if (highByte >= 0) {
+          target[position++] = 0xd5; // fixext 2
+
+          target[position++] = 0x72; // "r" record defintion extension type
+
+          target[position++] = (recordId & 0x1f) + 0x60;
+          target[position++] = highByte;
+        } else {
+          target[position++] = 0xd4; // fixext 1
+
+          target[position++] = 0x72; // "r" record defintion extension type
+
+          target[position++] = recordId;
+        }
+
+        if (newTransitions) transitionsCount += serializationsSinceTransitionRebuild * newTransitions; // record the removal of the id, we can maintain our shared structure
+
+        if (recordIdsToRemove.length >= maxOwnStructures) recordIdsToRemove.shift()[RECORD_SYMBOL] = 0; // we are cycling back through, and have to remove old ones
+
+        recordIdsToRemove.push(transition);
+        pack(keys);
+      }
+    };
+
+    const insertNewRecord = (transition, keys, insertionOffset, newTransitions) => {
+      let mainTarget = target;
+      let mainPosition = position;
+      let mainSafeEnd = safeEnd;
+      let mainStart = start;
+      target = keysTarget;
+      position = 0;
+      start = 0;
+      if (!target) keysTarget = target = new ByteArrayAllocate(8192);
+      safeEnd = target.length - 10;
+      newRecord(transition, keys, newTransitions);
+      keysTarget = target;
+      let keysPosition = position;
+      target = mainTarget;
+      position = mainPosition;
+      safeEnd = mainSafeEnd;
+      start = mainStart;
+
+      if (keysPosition > 1) {
+        let newEnd = position + keysPosition - 1;
+        if (newEnd > safeEnd) makeRoom(newEnd);
+        let insertionPosition = insertionOffset + start;
+        target.copyWithin(insertionPosition + keysPosition, insertionPosition + 1, position);
+        target.set(keysTarget.slice(0, keysPosition), insertionPosition);
+        position = newEnd;
+      } else {
+        target[insertionOffset + start] = keysTarget[0];
+      }
+    };
+  }
+
+  useBuffer(buffer) {
+    // this means we are finished using our own buffer and we can write over it safely
+    target = buffer;
+    targetView = new DataView(target.buffer, target.byteOffset, target.byteLength);
+    position = 0;
+  }
+
+  clearSharedData() {
+    if (this.structures) this.structures = [];
+  }
+
+}
+
+function copyBinary(source, target, targetOffset, offset, endOffset) {
+  while (offset < endOffset) {
+    target[targetOffset++] = source[offset++];
+  }
+}
+
+extensionClasses = [Date, Set, Error, RegExp, ArrayBuffer, Object.getPrototypeOf(Uint8Array.prototype).constructor
+/*TypedArray*/
+, _unpack_js__WEBPACK_IMPORTED_MODULE_0__.C1Type];
+extensions = [{
+  pack(date, allocateForWrite, pack) {
+    let seconds = date.getTime() / 1000;
+
+    if ((this.useTimestamp32 || date.getMilliseconds() === 0) && seconds >= 0 && seconds < 0x100000000) {
+      // Timestamp 32
+      let {
+        target,
+        targetView,
+        position
+      } = allocateForWrite(6);
+      target[position++] = 0xd6;
+      target[position++] = 0xff;
+      targetView.setUint32(position, seconds);
+    } else if (seconds > 0 && seconds < 0x100000000) {
+      // Timestamp 64
+      let {
+        target,
+        targetView,
+        position
+      } = allocateForWrite(10);
+      target[position++] = 0xd7;
+      target[position++] = 0xff;
+      targetView.setUint32(position, date.getMilliseconds() * 4000000 + (seconds / 1000 / 0x100000000 >> 0));
+      targetView.setUint32(position + 4, seconds);
+    } else if (isNaN(seconds)) {
+      if (this.onInvalidDate) {
+        allocateForWrite(0);
+        return pack(this.onInvalidDate());
+      } // Intentionally invalid timestamp
+
+
+      let {
+        target,
+        targetView,
+        position
+      } = allocateForWrite(3);
+      target[position++] = 0xd4;
+      target[position++] = 0xff;
+      target[position++] = 0xff;
+    } else {
+      // Timestamp 96
+      let {
+        target,
+        targetView,
+        position
+      } = allocateForWrite(15);
+      target[position++] = 0xc7;
+      target[position++] = 12;
+      target[position++] = 0xff;
+      targetView.setUint32(position, date.getMilliseconds() * 1000000);
+      targetView.setBigInt64(position + 4, BigInt(Math.floor(seconds)));
+    }
+  }
+
+}, {
+  pack(set, allocateForWrite, pack) {
+    let array = Array.from(set);
+    let {
+      target,
+      position
+    } = allocateForWrite(this.moreTypes ? 3 : 0);
+
+    if (this.moreTypes) {
+      target[position++] = 0xd4;
+      target[position++] = 0x73; // 's' for Set
+
+      target[position++] = 0;
+    }
+
+    pack(array);
+  }
+
+}, {
+  pack(error, allocateForWrite, pack) {
+    let {
+      target,
+      position
+    } = allocateForWrite(this.moreTypes ? 3 : 0);
+
+    if (this.moreTypes) {
+      target[position++] = 0xd4;
+      target[position++] = 0x65; // 'e' for error
+
+      target[position++] = 0;
+    }
+
+    pack([error.name, error.message]);
+  }
+
+}, {
+  pack(regex, allocateForWrite, pack) {
+    let {
+      target,
+      position
+    } = allocateForWrite(this.moreTypes ? 3 : 0);
+
+    if (this.moreTypes) {
+      target[position++] = 0xd4;
+      target[position++] = 0x78; // 'x' for regeXp
+
+      target[position++] = 0;
+    }
+
+    pack([regex.source, regex.flags]);
+  }
+
+}, {
+  pack(arrayBuffer, allocateForWrite) {
+    if (this.moreTypes) writeExtBuffer(arrayBuffer, 0x10, allocateForWrite);else writeBuffer(hasNodeBuffer ? Buffer.from(arrayBuffer) : new Uint8Array(arrayBuffer), allocateForWrite);
+  }
+
+}, {
+  pack(typedArray, allocateForWrite) {
+    let constructor = typedArray.constructor;
+    if (constructor !== ByteArray && this.moreTypes) writeExtBuffer(typedArray, _unpack_js__WEBPACK_IMPORTED_MODULE_0__.typedArrays.indexOf(constructor.name), allocateForWrite);else writeBuffer(typedArray, allocateForWrite);
+  }
+
+}, {
+  pack(c1, allocateForWrite) {
+    // specific 0xC1 object
+    let {
+      target,
+      position
+    } = allocateForWrite(1);
+    target[position] = 0xc1;
+  }
+
+}];
+
+function writeExtBuffer(typedArray, type, allocateForWrite, encode) {
+  let length = typedArray.byteLength;
+
+  if (length + 1 < 0x100) {
+    var {
+      target,
+      position
+    } = allocateForWrite(4 + length);
+    target[position++] = 0xc7;
+    target[position++] = length + 1;
+  } else if (length + 1 < 0x10000) {
+    var {
+      target,
+      position
+    } = allocateForWrite(5 + length);
+    target[position++] = 0xc8;
+    target[position++] = length + 1 >> 8;
+    target[position++] = length + 1 & 0xff;
+  } else {
+    var {
+      target,
+      position,
+      targetView
+    } = allocateForWrite(7 + length);
+    target[position++] = 0xc9;
+    targetView.setUint32(position, length + 1); // plus one for the type byte
+
+    position += 4;
+  }
+
+  target[position++] = 0x74; // "t" for typed array
+
+  target[position++] = type;
+  target.set(new Uint8Array(typedArray.buffer, typedArray.byteOffset, typedArray.byteLength), position);
+}
+
+function writeBuffer(buffer, allocateForWrite) {
+  let length = buffer.byteLength;
+  var target, position;
+
+  if (length < 0x100) {
+    var {
+      target,
+      position
+    } = allocateForWrite(length + 2);
+    target[position++] = 0xc4;
+    target[position++] = length;
+  } else if (length < 0x10000) {
+    var {
+      target,
+      position
+    } = allocateForWrite(length + 3);
+    target[position++] = 0xc5;
+    target[position++] = length >> 8;
+    target[position++] = length & 0xff;
+  } else {
+    var {
+      target,
+      position,
+      targetView
+    } = allocateForWrite(length + 5);
+    target[position++] = 0xc6;
+    targetView.setUint32(position, length);
+    position += 4;
+  }
+
+  target.set(buffer, position);
+}
+
+function writeExtensionData(result, target, position, type) {
+  let length = result.length;
+
+  switch (length) {
+    case 1:
+      target[position++] = 0xd4;
+      break;
+
+    case 2:
+      target[position++] = 0xd5;
+      break;
+
+    case 4:
+      target[position++] = 0xd6;
+      break;
+
+    case 8:
+      target[position++] = 0xd7;
+      break;
+
+    case 16:
+      target[position++] = 0xd8;
+      break;
+
+    default:
+      if (length < 0x100) {
+        target[position++] = 0xc7;
+        target[position++] = length;
+      } else if (length < 0x10000) {
+        target[position++] = 0xc8;
+        target[position++] = length >> 8;
+        target[position++] = length & 0xff;
+      } else {
+        target[position++] = 0xc9;
+        target[position++] = length >> 24;
+        target[position++] = length >> 16 & 0xff;
+        target[position++] = length >> 8 & 0xff;
+        target[position++] = length & 0xff;
+      }
+
+  }
+
+  target[position++] = type;
+  target.set(result, position);
+  position += length;
+  return position;
+}
+
+function insertIds(serialized, idsToInsert) {
+  // insert the ids that need to be referenced for structured clones
+  let nextId;
+  let distanceToMove = idsToInsert.length * 6;
+  let lastEnd = serialized.length - distanceToMove;
+  idsToInsert.sort((a, b) => a.offset > b.offset ? 1 : -1);
+
+  while (nextId = idsToInsert.pop()) {
+    let offset = nextId.offset;
+    let id = nextId.id;
+    serialized.copyWithin(offset + distanceToMove, offset, lastEnd);
+    distanceToMove -= 6;
+    let position = offset + distanceToMove;
+    serialized[position++] = 0xd6;
+    serialized[position++] = 0x69; // 'i'
+
+    serialized[position++] = id >> 24;
+    serialized[position++] = id >> 16 & 0xff;
+    serialized[position++] = id >> 8 & 0xff;
+    serialized[position++] = id & 0xff;
+    lastEnd = offset;
+  }
+
+  return serialized;
+}
+
+function writeBundles(start, pack) {
+  targetView.setUint32(bundledStrings.position + start, position - bundledStrings.position - start);
+  let writeStrings = bundledStrings;
+  bundledStrings = null;
+  let startPosition = position;
+  pack(writeStrings[0]);
+  pack(writeStrings[1]);
+}
+
+function addExtension(extension) {
+  if (extension.Class) {
+    if (!extension.pack && !extension.write) throw new Error('Extension has no pack or write function');
+    if (extension.pack && !extension.type) throw new Error('Extension has no type (numeric code to identify the extension)');
+    extensionClasses.unshift(extension.Class);
+    extensions.unshift(extension);
+  }
+
+  (0,_unpack_js__WEBPACK_IMPORTED_MODULE_0__.addExtension)(extension);
+}
+let defaultPackr = new Packr({
+  useRecords: false
+});
+const pack = defaultPackr.pack;
+const encode = defaultPackr.pack;
+const Encoder = Packr;
+
+
+const {
+  NEVER,
+  ALWAYS,
+  DECIMAL_ROUND,
+  DECIMAL_FIT
+} = _unpack_js__WEBPACK_IMPORTED_MODULE_0__.FLOAT32_OPTIONS;
+const REUSE_BUFFER_MODE = 512;
+const RESET_BUFFER_MODE = 1024;
+
+/***/ }),
+
+/***/ "./node_modules/msgpackr/unpack.js":
+/*!*****************************************!*\
+  !*** ./node_modules/msgpackr/unpack.js ***!
+  \*****************************************/
+/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
+
+"use strict";
+__webpack_require__.r(__webpack_exports__);
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   "C1": () => (/* binding */ C1),
+/* harmony export */   "C1Type": () => (/* binding */ C1Type),
+/* harmony export */   "Decoder": () => (/* binding */ Decoder),
+/* harmony export */   "FLOAT32_OPTIONS": () => (/* binding */ FLOAT32_OPTIONS),
+/* harmony export */   "Unpackr": () => (/* binding */ Unpackr),
+/* harmony export */   "addExtension": () => (/* binding */ addExtension),
+/* harmony export */   "checkedRead": () => (/* binding */ checkedRead),
+/* harmony export */   "clearSource": () => (/* binding */ clearSource),
+/* harmony export */   "decode": () => (/* binding */ decode),
+/* harmony export */   "getPosition": () => (/* binding */ getPosition),
+/* harmony export */   "isNativeAccelerationEnabled": () => (/* binding */ isNativeAccelerationEnabled),
+/* harmony export */   "mult10": () => (/* binding */ mult10),
+/* harmony export */   "read": () => (/* binding */ read),
+/* harmony export */   "roundFloat32": () => (/* binding */ roundFloat32),
+/* harmony export */   "setExtractor": () => (/* binding */ setExtractor),
+/* harmony export */   "typedArrays": () => (/* binding */ typedArrays),
+/* harmony export */   "unpack": () => (/* binding */ unpack),
+/* harmony export */   "unpackMultiple": () => (/* binding */ unpackMultiple)
+/* harmony export */ });
+
+
+var decoder;
+
+try {
+  decoder = new TextDecoder();
+} catch (error) {}
+
+var src;
+var srcEnd;
+var position = 0;
+var alreadySet;
+const EMPTY_ARRAY = [];
+var strings = EMPTY_ARRAY;
+var stringPosition = 0;
+var currentUnpackr = {};
+var currentStructures;
+var srcString;
+var srcStringStart = 0;
+var srcStringEnd = 0;
+var bundledStrings;
+var referenceMap;
+var currentExtensions = [];
+var dataView;
+var defaultOptions = {
+  useRecords: false,
+  mapsAsObjects: true
+};
+class C1Type {}
+const C1 = new C1Type();
+C1.name = 'MessagePack 0xC1';
+var sequentialMode = false;
+var inlineObjectReadThreshold = 2;
+
+try {
+  new Function('');
+} catch (error) {
+  // if eval variants are not supported, do not create inline object readers ever
+  inlineObjectReadThreshold = Infinity;
+}
+
+class Unpackr {
+  constructor(options) {
+    if (options) {
+      if (options.useRecords === false && options.mapsAsObjects === undefined) options.mapsAsObjects = true;
+      if (options.structures) options.structures.sharedLength = options.structures.length;else if (options.getStructures) {
+        (options.structures = []).uninitialized = true; // this is what we use to denote an uninitialized structures
+
+        options.structures.sharedLength = 0;
+      }
+    }
+
+    Object.assign(this, options);
+  }
+
+  unpack(source, end) {
+    if (src) {
+      // re-entrant execution, save the state and restore it after we do this unpack
+      return saveState(() => {
+        clearSource();
+        return this ? this.unpack(source, end) : Unpackr.prototype.unpack.call(defaultOptions, source, end);
+      });
+    }
+
+    srcEnd = end > -1 ? end : source.length;
+    position = 0;
+    stringPosition = 0;
+    srcStringEnd = 0;
+    srcString = null;
+    strings = EMPTY_ARRAY;
+    bundledStrings = null;
+    src = source; // this provides cached access to the data view for a buffer if it is getting reused, which is a recommend
+    // technique for getting data from a database where it can be copied into an existing buffer instead of creating
+    // new ones
+
+    try {
+      dataView = source.dataView || (source.dataView = new DataView(source.buffer, source.byteOffset, source.byteLength));
+    } catch (error) {
+      // if it doesn't have a buffer, maybe it is the wrong type of object
+      src = null;
+      if (source instanceof Uint8Array) throw error;
+      throw new Error('Source must be a Uint8Array or Buffer but was a ' + (source && typeof source == 'object' ? source.constructor.name : typeof source));
+    }
+
+    if (this instanceof Unpackr) {
+      currentUnpackr = this;
+
+      if (this.structures) {
+        currentStructures = this.structures;
+        return checkedRead();
+      } else if (!currentStructures || currentStructures.length > 0) {
+        currentStructures = [];
+      }
+    } else {
+      currentUnpackr = defaultOptions;
+      if (!currentStructures || currentStructures.length > 0) currentStructures = [];
+    }
+
+    return checkedRead();
+  }
+
+  unpackMultiple(source, forEach) {
+    let values,
+        lastPosition = 0;
+
+    try {
+      sequentialMode = true;
+      let size = source.length;
+      let value = this ? this.unpack(source, size) : defaultUnpackr.unpack(source, size);
+
+      if (forEach) {
+        forEach(value);
+
+        while (position < size) {
+          lastPosition = position;
+
+          if (forEach(checkedRead()) === false) {
+            return;
+          }
+        }
+      } else {
+        values = [value];
+
+        while (position < size) {
+          lastPosition = position;
+          values.push(checkedRead());
+        }
+
+        return values;
+      }
+    } catch (error) {
+      error.lastPosition = lastPosition;
+      error.values = values;
+      throw error;
+    } finally {
+      sequentialMode = false;
+      clearSource();
+    }
+  }
+
+  _mergeStructures(loadedStructures, existingStructures) {
+    loadedStructures = loadedStructures || [];
+
+    for (let i = 0, l = loadedStructures.length; i < l; i++) {
+      let structure = loadedStructures[i];
+
+      if (structure) {
+        structure.isShared = true;
+        if (i >= 32) structure.highByte = i - 32 >> 5;
+      }
+    }
+
+    loadedStructures.sharedLength = loadedStructures.length;
+
+    for (let id in existingStructures || []) {
+      if (id >= 0) {
+        let structure = loadedStructures[id];
+        let existing = existingStructures[id];
+
+        if (existing) {
+          if (structure) (loadedStructures.restoreStructures || (loadedStructures.restoreStructures = []))[id] = structure;
+          loadedStructures[id] = existing;
+        }
+      }
+    }
+
+    return this.structures = loadedStructures;
+  }
+
+  decode(source, end) {
+    return this.unpack(source, end);
+  }
+
+}
+function getPosition() {
+  return position;
+}
+function checkedRead() {
+  try {
+    if (!currentUnpackr.trusted && !sequentialMode) {
+      let sharedLength = currentStructures.sharedLength || 0;
+      if (sharedLength < currentStructures.length) currentStructures.length = sharedLength;
+    }
+
+    let result = read();
+    if (bundledStrings) // bundled strings to skip past
+      position = bundledStrings.postBundlePosition;
+
+    if (position == srcEnd) {
+      // finished reading this source, cleanup references
+      if (currentStructures.restoreStructures) restoreStructures();
+      currentStructures = null;
+      src = null;
+      if (referenceMap) referenceMap = null;
+    } else if (position > srcEnd) {
+      // over read
+      let error = new Error('Unexpected end of MessagePack data');
+      error.incomplete = true;
+      throw error;
+    } else if (!sequentialMode) {
+      throw new Error('Data read, but end of buffer not reached');
+    } // else more to read, but we are reading sequentially, so don't clear source yet
+
+
+    return result;
+  } catch (error) {
+    if (currentStructures.restoreStructures) restoreStructures();
+    clearSource();
+
+    if (error instanceof RangeError || error.message.startsWith('Unexpected end of buffer')) {
+      error.incomplete = true;
+    }
+
+    throw error;
+  }
+}
+
+function restoreStructures() {
+  for (let id in currentStructures.restoreStructures) {
+    currentStructures[id] = currentStructures.restoreStructures[id];
+  }
+
+  currentStructures.restoreStructures = null;
+}
+
+function read() {
+  let token = src[position++];
+
+  if (token < 0xa0) {
+    if (token < 0x80) {
+      if (token < 0x40) return token;else {
+        let structure = currentStructures[token & 0x3f] || currentUnpackr.getStructures && loadStructures()[token & 0x3f];
+
+        if (structure) {
+          if (!structure.read) {
+            structure.read = createStructureReader(structure, token & 0x3f);
+          }
+
+          return structure.read();
+        } else return token;
+      }
+    } else if (token < 0x90) {
+      // map
+      token -= 0x80;
+
+      if (currentUnpackr.mapsAsObjects) {
+        let object = {};
+
+        for (let i = 0; i < token; i++) {
+          object[readKey()] = read();
+        }
+
+        return object;
+      } else {
+        let map = new Map();
+
+        for (let i = 0; i < token; i++) {
+          map.set(read(), read());
+        }
+
+        return map;
+      }
+    } else {
+      token -= 0x90;
+      let array = new Array(token);
+
+      for (let i = 0; i < token; i++) {
+        array[i] = read();
+      }
+
+      return array;
+    }
+  } else if (token < 0xc0) {
+    // fixstr
+    let length = token - 0xa0;
+
+    if (srcStringEnd >= position) {
+      return srcString.slice(position - srcStringStart, (position += length) - srcStringStart);
+    }
+
+    if (srcStringEnd == 0 && srcEnd < 140) {
+      // for small blocks, avoiding the overhead of the extract call is helpful
+      let string = length < 16 ? shortStringInJS(length) : longStringInJS(length);
+      if (string != null) return string;
+    }
+
+    return readFixedString(length);
+  } else {
+    let value;
+
+    switch (token) {
+      case 0xc0:
+        return null;
+
+      case 0xc1:
+        if (bundledStrings) {
+          value = read(); // followed by the length of the string in characters (not bytes!)
+
+          if (value > 0) return bundledStrings[1].slice(bundledStrings.position1, bundledStrings.position1 += value);else return bundledStrings[0].slice(bundledStrings.position0, bundledStrings.position0 -= value);
+        }
+
+        return C1;
+      // "never-used", return special object to denote that
+
+      case 0xc2:
+        return false;
+
+      case 0xc3:
+        return true;
+
+      case 0xc4:
+        // bin 8
+        return readBin(src[position++]);
+
+      case 0xc5:
+        // bin 16
+        value = dataView.getUint16(position);
+        position += 2;
+        return readBin(value);
+
+      case 0xc6:
+        // bin 32
+        value = dataView.getUint32(position);
+        position += 4;
+        return readBin(value);
+
+      case 0xc7:
+        // ext 8
+        return readExt(src[position++]);
+
+      case 0xc8:
+        // ext 16
+        value = dataView.getUint16(position);
+        position += 2;
+        return readExt(value);
+
+      case 0xc9:
+        // ext 32
+        value = dataView.getUint32(position);
+        position += 4;
+        return readExt(value);
+
+      case 0xca:
+        value = dataView.getFloat32(position);
+
+        if (currentUnpackr.useFloat32 > 2) {
+          // this does rounding of numbers that were encoded in 32-bit float to nearest significant decimal digit that could be preserved
+          let multiplier = mult10[(src[position] & 0x7f) << 1 | src[position + 1] >> 7];
+          position += 4;
+          return (multiplier * value + (value > 0 ? 0.5 : -0.5) >> 0) / multiplier;
+        }
+
+        position += 4;
+        return value;
+
+      case 0xcb:
+        value = dataView.getFloat64(position);
+        position += 8;
+        return value;
+      // uint handlers
+
+      case 0xcc:
+        return src[position++];
+
+      case 0xcd:
+        value = dataView.getUint16(position);
+        position += 2;
+        return value;
+
+      case 0xce:
+        value = dataView.getUint32(position);
+        position += 4;
+        return value;
+
+      case 0xcf:
+        if (currentUnpackr.int64AsNumber) {
+          value = dataView.getUint32(position) * 0x100000000;
+          value += dataView.getUint32(position + 4);
+        } else value = dataView.getBigUint64(position);
+
+        position += 8;
+        return value;
+      // int handlers
+
+      case 0xd0:
+        return dataView.getInt8(position++);
+
+      case 0xd1:
+        value = dataView.getInt16(position);
+        position += 2;
+        return value;
+
+      case 0xd2:
+        value = dataView.getInt32(position);
+        position += 4;
+        return value;
+
+      case 0xd3:
+        if (currentUnpackr.int64AsNumber) {
+          value = dataView.getInt32(position) * 0x100000000;
+          value += dataView.getUint32(position + 4);
+        } else value = dataView.getBigInt64(position);
+
+        position += 8;
+        return value;
+
+      case 0xd4:
+        // fixext 1
+        value = src[position++];
+
+        if (value == 0x72) {
+          return recordDefinition(src[position++] & 0x3f);
+        } else {
+          let extension = currentExtensions[value];
+
+          if (extension) {
+            if (extension.read) {
+              position++; // skip filler byte
+
+              return extension.read(read());
+            } else if (extension.noBuffer) {
+              position++; // skip filler byte
+
+              return extension();
+            } else return extension(src.subarray(position, ++position));
+          } else throw new Error('Unknown extension ' + value);
+        }
+
+      case 0xd5:
+        // fixext 2
+        value = src[position];
+
+        if (value == 0x72) {
+          position++;
+          return recordDefinition(src[position++] & 0x3f, src[position++]);
+        } else return readExt(2);
+
+      case 0xd6:
+        // fixext 4
+        return readExt(4);
+
+      case 0xd7:
+        // fixext 8
+        return readExt(8);
+
+      case 0xd8:
+        // fixext 16
+        return readExt(16);
+
+      case 0xd9:
+        // str 8
+        value = src[position++];
+
+        if (srcStringEnd >= position) {
+          return srcString.slice(position - srcStringStart, (position += value) - srcStringStart);
+        }
+
+        return readString8(value);
+
+      case 0xda:
+        // str 16
+        value = dataView.getUint16(position);
+        position += 2;
+
+        if (srcStringEnd >= position) {
+          return srcString.slice(position - srcStringStart, (position += value) - srcStringStart);
+        }
+
+        return readString16(value);
+
+      case 0xdb:
+        // str 32
+        value = dataView.getUint32(position);
+        position += 4;
+
+        if (srcStringEnd >= position) {
+          return srcString.slice(position - srcStringStart, (position += value) - srcStringStart);
+        }
+
+        return readString32(value);
+
+      case 0xdc:
+        // array 16
+        value = dataView.getUint16(position);
+        position += 2;
+        return readArray(value);
+
+      case 0xdd:
+        // array 32
+        value = dataView.getUint32(position);
+        position += 4;
+        return readArray(value);
+
+      case 0xde:
+        // map 16
+        value = dataView.getUint16(position);
+        position += 2;
+        return readMap(value);
+
+      case 0xdf:
+        // map 32
+        value = dataView.getUint32(position);
+        position += 4;
+        return readMap(value);
+
+      default:
+        // negative int
+        if (token >= 0xe0) return token - 0x100;
+
+        if (token === undefined) {
+          let error = new Error('Unexpected end of MessagePack data');
+          error.incomplete = true;
+          throw error;
+        }
+
+        throw new Error('Unknown MessagePack token ' + token);
+    }
+  }
+}
+const validName = /^[a-zA-Z_$][a-zA-Z\d_$]*$/;
+
+function createStructureReader(structure, firstId) {
+  function readObject() {
+    // This initial function is quick to instantiate, but runs slower. After several iterations pay the cost to build the faster function
+    if (readObject.count++ > inlineObjectReadThreshold) {
+      let readObject = structure.read = new Function('r', 'return function(){return {' + structure.map(key => validName.test(key) ? key + ':r()' : '[' + JSON.stringify(key) + ']:r()').join(',') + '}}')(read);
+      if (structure.highByte === 0) structure.read = createSecondByteReader(firstId, structure.read);
+      return readObject(); // second byte is already read, if there is one so immediately read object
+    }
+
+    let object = {};
+
+    for (let i = 0, l = structure.length; i < l; i++) {
+      let key = structure[i];
+      object[key] = read();
+    }
+
+    return object;
+  }
+
+  readObject.count = 0;
+
+  if (structure.highByte === 0) {
+    return createSecondByteReader(firstId, readObject);
+  }
+
+  return readObject;
+}
+
+const createSecondByteReader = (firstId, read0) => {
+  return function () {
+    let highByte = src[position++];
+    if (highByte === 0) return read0();
+    let id = firstId < 32 ? -(firstId + (highByte << 5)) : firstId + (highByte << 5);
+    let structure = currentStructures[id] || loadStructures()[id];
+
+    if (!structure) {
+      throw new Error('Record id is not defined for ' + id);
+    }
+
+    if (!structure.read) structure.read = createStructureReader(structure, firstId);
+    return structure.read();
+  };
+};
+
+function loadStructures() {
+  let loadedStructures = saveState(() => {
+    // save the state in case getStructures modifies our buffer
+    src = null;
+    return currentUnpackr.getStructures();
+  });
+  return currentStructures = currentUnpackr._mergeStructures(loadedStructures, currentStructures);
+}
+
+var readFixedString = readStringJS;
+var readString8 = readStringJS;
+var readString16 = readStringJS;
+var readString32 = readStringJS;
+let isNativeAccelerationEnabled = false;
+function setExtractor(extractStrings) {
+  isNativeAccelerationEnabled = true;
+  readFixedString = readString(1);
+  readString8 = readString(2);
+  readString16 = readString(3);
+  readString32 = readString(5);
+
+  function readString(headerLength) {
+    return function readString(length) {
+      let string = strings[stringPosition++];
+
+      if (string == null) {
+        if (bundledStrings) return readStringJS(length);
+        let extraction = extractStrings(position - headerLength, srcEnd, src);
+
+        if (typeof extraction == 'string') {
+          string = extraction;
+          strings = EMPTY_ARRAY;
+        } else {
+          strings = extraction;
+          stringPosition = 1;
+          srcStringEnd = 1; // even if a utf-8 string was decoded, must indicate we are in the midst of extracted strings and can't skip strings
+
+          string = strings[0];
+          if (string === undefined) throw new Error('Unexpected end of buffer');
+        }
+      }
+
+      let srcStringLength = string.length;
+
+      if (srcStringLength <= length) {
+        position += length;
+        return string;
+      }
+
+      srcString = string;
+      srcStringStart = position;
+      srcStringEnd = position + srcStringLength;
+      position += length;
+      return string.slice(0, length); // we know we just want the beginning
+    };
+  }
+}
+
+function readStringJS(length) {
+  let result;
+
+  if (length < 16) {
+    if (result = shortStringInJS(length)) return result;
+  }
+
+  if (length > 64 && decoder) return decoder.decode(src.subarray(position, position += length));
+  const end = position + length;
+  const units = [];
+  result = '';
+
+  while (position < end) {
+    const byte1 = src[position++];
+
+    if ((byte1 & 0x80) === 0) {
+      // 1 byte
+      units.push(byte1);
+    } else if ((byte1 & 0xe0) === 0xc0) {
+      // 2 bytes
+      const byte2 = src[position++] & 0x3f;
+      units.push((byte1 & 0x1f) << 6 | byte2);
+    } else if ((byte1 & 0xf0) === 0xe0) {
+      // 3 bytes
+      const byte2 = src[position++] & 0x3f;
+      const byte3 = src[position++] & 0x3f;
+      units.push((byte1 & 0x1f) << 12 | byte2 << 6 | byte3);
+    } else if ((byte1 & 0xf8) === 0xf0) {
+      // 4 bytes
+      const byte2 = src[position++] & 0x3f;
+      const byte3 = src[position++] & 0x3f;
+      const byte4 = src[position++] & 0x3f;
+      let unit = (byte1 & 0x07) << 0x12 | byte2 << 0x0c | byte3 << 0x06 | byte4;
+
+      if (unit > 0xffff) {
+        unit -= 0x10000;
+        units.push(unit >>> 10 & 0x3ff | 0xd800);
+        unit = 0xdc00 | unit & 0x3ff;
+      }
+
+      units.push(unit);
+    } else {
+      units.push(byte1);
+    }
+
+    if (units.length >= 0x1000) {
+      result += fromCharCode.apply(String, units);
+      units.length = 0;
+    }
+  }
+
+  if (units.length > 0) {
+    result += fromCharCode.apply(String, units);
+  }
+
+  return result;
+}
+
+function readArray(length) {
+  let array = new Array(length);
+
+  for (let i = 0; i < length; i++) {
+    array[i] = read();
+  }
+
+  return array;
+}
+
+function readMap(length) {
+  if (currentUnpackr.mapsAsObjects) {
+    let object = {};
+
+    for (let i = 0; i < length; i++) {
+      object[readKey()] = read();
+    }
+
+    return object;
+  } else {
+    let map = new Map();
+
+    for (let i = 0; i < length; i++) {
+      map.set(read(), read());
+    }
+
+    return map;
+  }
+}
+
+var fromCharCode = String.fromCharCode;
+
+function longStringInJS(length) {
+  let start = position;
+  let bytes = new Array(length);
+
+  for (let i = 0; i < length; i++) {
+    const byte = src[position++];
+
+    if ((byte & 0x80) > 0) {
+      position = start;
+      return;
+    }
+
+    bytes[i] = byte;
+  }
+
+  return fromCharCode.apply(String, bytes);
+}
+
+function shortStringInJS(length) {
+  if (length < 4) {
+    if (length < 2) {
+      if (length === 0) return '';else {
+        let a = src[position++];
+
+        if ((a & 0x80) > 1) {
+          position -= 1;
+          return;
+        }
+
+        return fromCharCode(a);
+      }
+    } else {
+      let a = src[position++];
+      let b = src[position++];
+
+      if ((a & 0x80) > 0 || (b & 0x80) > 0) {
+        position -= 2;
+        return;
+      }
+
+      if (length < 3) return fromCharCode(a, b);
+      let c = src[position++];
+
+      if ((c & 0x80) > 0) {
+        position -= 3;
+        return;
+      }
+
+      return fromCharCode(a, b, c);
+    }
+  } else {
+    let a = src[position++];
+    let b = src[position++];
+    let c = src[position++];
+    let d = src[position++];
+
+    if ((a & 0x80) > 0 || (b & 0x80) > 0 || (c & 0x80) > 0 || (d & 0x80) > 0) {
+      position -= 4;
+      return;
+    }
+
+    if (length < 6) {
+      if (length === 4) return fromCharCode(a, b, c, d);else {
+        let e = src[position++];
+
+        if ((e & 0x80) > 0) {
+          position -= 5;
+          return;
+        }
+
+        return fromCharCode(a, b, c, d, e);
+      }
+    } else if (length < 8) {
+      let e = src[position++];
+      let f = src[position++];
+
+      if ((e & 0x80) > 0 || (f & 0x80) > 0) {
+        position -= 6;
+        return;
+      }
+
+      if (length < 7) return fromCharCode(a, b, c, d, e, f);
+      let g = src[position++];
+
+      if ((g & 0x80) > 0) {
+        position -= 7;
+        return;
+      }
+
+      return fromCharCode(a, b, c, d, e, f, g);
+    } else {
+      let e = src[position++];
+      let f = src[position++];
+      let g = src[position++];
+      let h = src[position++];
+
+      if ((e & 0x80) > 0 || (f & 0x80) > 0 || (g & 0x80) > 0 || (h & 0x80) > 0) {
+        position -= 8;
+        return;
+      }
+
+      if (length < 10) {
+        if (length === 8) return fromCharCode(a, b, c, d, e, f, g, h);else {
+          let i = src[position++];
+
+          if ((i & 0x80) > 0) {
+            position -= 9;
+            return;
+          }
+
+          return fromCharCode(a, b, c, d, e, f, g, h, i);
+        }
+      } else if (length < 12) {
+        let i = src[position++];
+        let j = src[position++];
+
+        if ((i & 0x80) > 0 || (j & 0x80) > 0) {
+          position -= 10;
+          return;
+        }
+
+        if (length < 11) return fromCharCode(a, b, c, d, e, f, g, h, i, j);
+        let k = src[position++];
+
+        if ((k & 0x80) > 0) {
+          position -= 11;
+          return;
+        }
+
+        return fromCharCode(a, b, c, d, e, f, g, h, i, j, k);
+      } else {
+        let i = src[position++];
+        let j = src[position++];
+        let k = src[position++];
+        let l = src[position++];
+
+        if ((i & 0x80) > 0 || (j & 0x80) > 0 || (k & 0x80) > 0 || (l & 0x80) > 0) {
+          position -= 12;
+          return;
+        }
+
+        if (length < 14) {
+          if (length === 12) return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l);else {
+            let m = src[position++];
+
+            if ((m & 0x80) > 0) {
+              position -= 13;
+              return;
+            }
+
+            return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m);
+          }
+        } else {
+          let m = src[position++];
+          let n = src[position++];
+
+          if ((m & 0x80) > 0 || (n & 0x80) > 0) {
+            position -= 14;
+            return;
+          }
+
+          if (length < 15) return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n);
+          let o = src[position++];
+
+          if ((o & 0x80) > 0) {
+            position -= 15;
+            return;
+          }
+
+          return fromCharCode(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o);
+        }
+      }
+    }
+  }
+}
+
+function readOnlyJSString() {
+  let token = src[position++];
+  let length;
+
+  if (token < 0xc0) {
+    // fixstr
+    length = token - 0xa0;
+  } else {
+    switch (token) {
+      case 0xd9:
+        // str 8
+        length = src[position++];
+        break;
+
+      case 0xda:
+        // str 16
+        length = dataView.getUint16(position);
+        position += 2;
+        break;
+
+      case 0xdb:
+        // str 32
+        length = dataView.getUint32(position);
+        position += 4;
+        break;
+
+      default:
+        throw new Error('Expected string');
+    }
+  }
+
+  return readStringJS(length);
+}
+
+function readBin(length) {
+  return currentUnpackr.copyBuffers ? // specifically use the copying slice (not the node one)
+  Uint8Array.prototype.slice.call(src, position, position += length) : src.subarray(position, position += length);
+}
+
+function readExt(length) {
+  let type = src[position++];
+
+  if (currentExtensions[type]) {
+    return currentExtensions[type](src.subarray(position, position += length));
+  } else throw new Error('Unknown extension type ' + type);
+}
+
+var keyCache = new Array(4096);
+
+function readKey() {
+  let length = src[position++];
+
+  if (length >= 0xa0 && length < 0xc0) {
+    // fixstr, potentially use key cache
+    length = length - 0xa0;
+    if (srcStringEnd >= position) // if it has been extracted, must use it (and faster anyway)
+      return srcString.slice(position - srcStringStart, (position += length) - srcStringStart);else if (!(srcStringEnd == 0 && srcEnd < 180)) return readFixedString(length);
+  } else {
+    // not cacheable, go back and do a standard read
+    position--;
+    return read();
+  }
+
+  let key = (length << 5 ^ (length > 1 ? dataView.getUint16(position) : length > 0 ? src[position] : 0)) & 0xfff;
+  let entry = keyCache[key];
+  let checkPosition = position;
+  let end = position + length - 3;
+  let chunk;
+  let i = 0;
+
+  if (entry && entry.bytes == length) {
+    while (checkPosition < end) {
+      chunk = dataView.getUint32(checkPosition);
+
+      if (chunk != entry[i++]) {
+        checkPosition = 0x70000000;
+        break;
+      }
+
+      checkPosition += 4;
+    }
+
+    end += 3;
+
+    while (checkPosition < end) {
+      chunk = src[checkPosition++];
+
+      if (chunk != entry[i++]) {
+        checkPosition = 0x70000000;
+        break;
+      }
+    }
+
+    if (checkPosition === end) {
+      position = checkPosition;
+      return entry.string;
+    }
+
+    end -= 3;
+    checkPosition = position;
+  }
+
+  entry = [];
+  keyCache[key] = entry;
+  entry.bytes = length;
+
+  while (checkPosition < end) {
+    chunk = dataView.getUint32(checkPosition);
+    entry.push(chunk);
+    checkPosition += 4;
+  }
+
+  end += 3;
+
+  while (checkPosition < end) {
+    chunk = src[checkPosition++];
+    entry.push(chunk);
+  } // for small blocks, avoiding the overhead of the extract call is helpful
+
+
+  let string = length < 16 ? shortStringInJS(length) : longStringInJS(length);
+  if (string != null) return entry.string = string;
+  return entry.string = readFixedString(length);
+} // the registration of the record definition extension (as "r")
+
+
+const recordDefinition = (id, highByte) => {
+  var structure = read();
+  let firstByte = id;
+
+  if (highByte !== undefined) {
+    id = id < 32 ? -((highByte << 5) + id) : (highByte << 5) + id;
+    structure.highByte = highByte;
+  }
+
+  let existingStructure = currentStructures[id];
+
+  if (existingStructure && existingStructure.isShared) {
+    (currentStructures.restoreStructures || (currentStructures.restoreStructures = []))[id] = existingStructure;
+  }
+
+  currentStructures[id] = structure;
+  structure.read = createStructureReader(structure, firstByte);
+  return structure.read();
+};
+
+var glbl = typeof self == 'object' ? self : global;
+
+currentExtensions[0] = () => {}; // notepack defines extension 0 to mean undefined, so use that as the default here
+
+
+currentExtensions[0].noBuffer = true;
+
+currentExtensions[0x65] = () => {
+  let data = read();
+  return (glbl[data[0]] || Error)(data[1]);
+};
+
+currentExtensions[0x69] = data => {
+  // id extension (for structured clones)
+  let id = dataView.getUint32(position - 4);
+  if (!referenceMap) referenceMap = new Map();
+  let token = src[position];
+  let target; // TODO: handle Maps, Sets, and other types that can cycle; this is complicated, because you potentially need to read
+  // ahead past references to record structure definitions
+
+  if (token >= 0x90 && token < 0xa0 || token == 0xdc || token == 0xdd) target = [];else target = {};
+  let refEntry = {
+    target
+  }; // a placeholder object
+
+  referenceMap.set(id, refEntry);
+  let targetProperties = read(); // read the next value as the target object to id
+
+  if (refEntry.used) // there is a cycle, so we have to assign properties to original target
+    return Object.assign(target, targetProperties);
+  refEntry.target = targetProperties; // the placeholder wasn't used, replace with the deserialized one
+
+  return targetProperties; // no cycle, can just use the returned read object
+};
+
+currentExtensions[0x70] = data => {
+  // pointer extension (for structured clones)
+  let id = dataView.getUint32(position - 4);
+  let refEntry = referenceMap.get(id);
+  refEntry.used = true;
+  return refEntry.target;
+};
+
+currentExtensions[0x73] = () => new Set(read());
+
+const typedArrays = ['Int8', 'Uint8', 'Uint8Clamped', 'Int16', 'Uint16', 'Int32', 'Uint32', 'Float32', 'Float64', 'BigInt64', 'BigUint64'].map(type => type + 'Array');
+
+currentExtensions[0x74] = data => {
+  let typeCode = data[0];
+  let typedArrayName = typedArrays[typeCode];
+  if (!typedArrayName) throw new Error('Could not find typed array for code ' + typeCode); // we have to always slice/copy here to get a new ArrayBuffer that is word/byte aligned
+
+  return new glbl[typedArrayName](Uint8Array.prototype.slice.call(data, 1).buffer);
+};
+
+currentExtensions[0x78] = () => {
+  let data = read();
+  return new RegExp(data[0], data[1]);
+};
+
+const TEMP_BUNDLE = [];
+
+currentExtensions[0x62] = data => {
+  let dataSize = (data[0] << 24) + (data[1] << 16) + (data[2] << 8) + data[3];
+  let dataPosition = position;
+  position += dataSize - data.length;
+  bundledStrings = TEMP_BUNDLE;
+  bundledStrings = [readOnlyJSString(), readOnlyJSString()];
+  bundledStrings.position0 = 0;
+  bundledStrings.position1 = 0;
+  bundledStrings.postBundlePosition = position;
+  position = dataPosition;
+  return read();
+};
+
+currentExtensions[0xff] = data => {
+  // 32-bit date extension
+  if (data.length == 4) return new Date((data[0] * 0x1000000 + (data[1] << 16) + (data[2] << 8) + data[3]) * 1000);else if (data.length == 8) return new Date(((data[0] << 22) + (data[1] << 14) + (data[2] << 6) + (data[3] >> 2)) / 1000000 + ((data[3] & 0x3) * 0x100000000 + data[4] * 0x1000000 + (data[5] << 16) + (data[6] << 8) + data[7]) * 1000);else if (data.length == 12) // TODO: Implement support for negative
+    return new Date(((data[0] << 24) + (data[1] << 16) + (data[2] << 8) + data[3]) / 1000000 + ((data[4] & 0x80 ? -0x1000000000000 : 0) + data[6] * 0x10000000000 + data[7] * 0x100000000 + data[8] * 0x1000000 + (data[9] << 16) + (data[10] << 8) + data[11]) * 1000);else return new Date('invalid');
+}; // notepack defines extension 0 to mean undefined, so use that as the default here
+// registration of bulk record definition?
+// currentExtensions[0x52] = () =>
+
+
+function saveState(callback) {
+  let savedSrcEnd = srcEnd;
+  let savedPosition = position;
+  let savedStringPosition = stringPosition;
+  let savedSrcStringStart = srcStringStart;
+  let savedSrcStringEnd = srcStringEnd;
+  let savedSrcString = srcString;
+  let savedStrings = strings;
+  let savedReferenceMap = referenceMap;
+  let savedBundledStrings = bundledStrings; // TODO: We may need to revisit this if we do more external calls to user code (since it could be slow)
+
+  let savedSrc = new Uint8Array(src.slice(0, srcEnd)); // we copy the data in case it changes while external data is processed
+
+  let savedStructures = currentStructures;
+  let savedStructuresContents = currentStructures.slice(0, currentStructures.length);
+  let savedPackr = currentUnpackr;
+  let savedSequentialMode = sequentialMode;
+  let value = callback();
+  srcEnd = savedSrcEnd;
+  position = savedPosition;
+  stringPosition = savedStringPosition;
+  srcStringStart = savedSrcStringStart;
+  srcStringEnd = savedSrcStringEnd;
+  srcString = savedSrcString;
+  strings = savedStrings;
+  referenceMap = savedReferenceMap;
+  bundledStrings = savedBundledStrings;
+  src = savedSrc;
+  sequentialMode = savedSequentialMode;
+  currentStructures = savedStructures;
+  currentStructures.splice(0, currentStructures.length, ...savedStructuresContents);
+  currentUnpackr = savedPackr;
+  dataView = new DataView(src.buffer, src.byteOffset, src.byteLength);
+  return value;
+}
+
+function clearSource() {
+  src = null;
+  referenceMap = null;
+  currentStructures = null;
+}
+function addExtension(extension) {
+  if (extension.unpack) currentExtensions[extension.type] = extension.unpack;else currentExtensions[extension.type] = extension;
+}
+const mult10 = new Array(147); // this is a table matching binary exponents to the multiplier to determine significant digit rounding
+
+for (let i = 0; i < 256; i++) {
+  mult10[i] = +('1e' + Math.floor(45.15 - i * 0.30103));
+}
+
+const Decoder = Unpackr;
+var defaultUnpackr = new Unpackr({
+  useRecords: false
+});
+const unpack = defaultUnpackr.unpack;
+const unpackMultiple = defaultUnpackr.unpackMultiple;
+const decode = defaultUnpackr.unpack;
+const FLOAT32_OPTIONS = {
+  NEVER: 0,
+  ALWAYS: 1,
+  DECIMAL_ROUND: 3,
+  DECIMAL_FIT: 4
+};
+let f32Array = new Float32Array(1);
+let u8Array = new Uint8Array(f32Array.buffer, 0, 4);
+function roundFloat32(float32Number) {
+  f32Array[0] = float32Number;
+  let multiplier = mult10[(u8Array[3] & 0x7f) << 1 | u8Array[2] >> 7];
+  return (multiplier * float32Number + (float32Number > 0 ? 0.5 : -0.5) >> 0) / multiplier;
+}
 
 /***/ })
 
@@ -3098,6 +5700,35 @@ module.exports = {
 /******/ 	}
 /******/ 	
 /************************************************************************/
+/******/ 	/* webpack/runtime/define property getters */
+/******/ 	(() => {
+/******/ 		// define getter functions for harmony exports
+/******/ 		__webpack_require__.d = (exports, definition) => {
+/******/ 			for(var key in definition) {
+/******/ 				if(__webpack_require__.o(definition, key) && !__webpack_require__.o(exports, key)) {
+/******/ 					Object.defineProperty(exports, key, { enumerable: true, get: definition[key] });
+/******/ 				}
+/******/ 			}
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/hasOwnProperty shorthand */
+/******/ 	(() => {
+/******/ 		__webpack_require__.o = (obj, prop) => (Object.prototype.hasOwnProperty.call(obj, prop))
+/******/ 	})();
+/******/ 	
+/******/ 	/* webpack/runtime/make namespace object */
+/******/ 	(() => {
+/******/ 		// define __esModule on exports
+/******/ 		__webpack_require__.r = (exports) => {
+/******/ 			if(typeof Symbol !== 'undefined' && Symbol.toStringTag) {
+/******/ 				Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' });
+/******/ 			}
+/******/ 			Object.defineProperty(exports, '__esModule', { value: true });
+/******/ 		};
+/******/ 	})();
+/******/ 	
+/************************************************************************/
 var __webpack_exports__ = {};
 // This entry need to be wrapped in an IIFE because it need to be isolated against other modules in the chunk.
 (() => {
@@ -3109,8 +5740,6 @@ const Cookies = __webpack_require__(/*! js-cookie */ "./node_modules/js-cookie/d
 const serial = __webpack_require__(/*! ../src/utils/serial */ "./src/utils/serial.js");
 
 const physics = __webpack_require__(/*! ../src/game/physics */ "./src/game/physics.js");
-
-const chron = __webpack_require__(/*! ../src/utils/chron */ "./src/utils/chron.js");
 
 const here = document.location;
 const tps = physics.TICKS_PER_SECOND;
@@ -3146,7 +5775,7 @@ let state = {
   token: null,
   mouseLocked: false
 };
-let tpf = 1;
+let ticksPerFrame = 1;
 let count = 1;
 let leaderboard = [];
 let rubber = 150;
@@ -3154,7 +5783,7 @@ let no_data = 0;
 let pinger = null;
 let seed = 0;
 let zoom = 1;
-let last_partial = null;
+let lastPartialTick = null;
 let resendCtrl = false;
 
 const draw = __webpack_require__(/*! ./draw */ "./js/draw.js")(canvas, self, objects, state, cursor);
@@ -3167,6 +5796,8 @@ const controls = __webpack_require__(/*! ./controls */ "./js/controls.js")(canva
 });
 
 const joystick = __webpack_require__(/*! ./joystick */ "./js/joystick.js")(self, state, controls);
+
+const tick = __webpack_require__(/*! ./tick */ "./js/tick.js")(self, objects, controls);
 
 let ui;
 draw.checkSize();
@@ -3195,9 +5826,141 @@ const nextZoom = () => {
   setZoom(ZOOM_LEVELS[indx]);
 };
 
+const onConnect = () => {
+  state.dead = false;
+
+  if (connectTimer !== null) {
+    clearTimeout(connectTimer);
+    connectTimer = null;
+  }
+
+  let nick = document.getElementById('nick').value.trim();
+  const perk = document.getElementById('perkselect').value.trim();
+
+  if (nick.length < 1) {
+    nick = (100000000 * Math.random() | 0).toString();
+  } else {
+    Cookies.set('avaruuspeli-name', nick);
+  }
+
+  Cookies.set('avaruuspeli-perk', perk);
+  ui.updateOnlineStatus('waiting for spawn');
+  serial.send(ws, serial.e_join(nick, perk));
+  draw.checkSize();
+  ui.updateControls(state);
+  joystick.resetJoystickCenter();
+  pinger = setInterval(() => {
+    if (++no_data > 8 || ws == null) {
+      disconnect();
+      return;
+    }
+
+    serial.send(ws, serial.e_ping(performance.now()));
+  }, 500);
+};
+
 const disconnect = () => {
   ui.disconnect();
   leaveGame();
+};
+
+const gotData = obj => {
+  let you = null;
+  let ships = [];
+  let projs = null;
+  let oldHealth = {};
+
+  for (const ship of objects.ships) {
+    oldHealth[ship._id] = ship.health;
+  }
+
+  ({
+    you,
+    ships,
+    projs,
+    count,
+    rubber,
+    seed
+  } = obj);
+  draw.setRubber(rubber);
+  objects.ships = ships;
+
+  for (const ship of ships) {
+    if (Object.prototype.hasOwnProperty.call(oldHealth, ship._id) && oldHealth[ship._id] > ship.health) {
+      draw.addBubble({
+        x: ship.posX,
+        y: ship.posY,
+        alpha: 100,
+        radius: 0.3 * (1 + oldHealth[ship._id] - ship.health)
+      });
+    }
+  }
+
+  if (self.dead) {
+    Object.assign(self, you);
+    self.dead = false;
+  } else {
+    // if there is a high velocity difference, average them out
+    if (Math.abs(you.posX - self.posX) > 0.3) {
+      self.posX = (self.posX + 3 * you.posX) / 4;
+      self.velX = (self.velX + you.velX) / 2;
+    }
+
+    if (Math.abs(you.posY - self.posY) > 0.3) {
+      self.posY = (self.posY + 3 * you.posY) / 4;
+      self.velY = (self.velY + you.velY) / 2;
+    }
+
+    if (Math.abs(you.velX - self.velX) > 0.2) {
+      self.velX = you.velX;
+    }
+
+    if (Math.abs(you.velY - self.velY) > 0.2) {
+      self.posY = you.posY;
+    }
+
+    if (controls.isAccelerating() !== (you.accel !== null) || controls.isBraking() !== (you.brake !== null)) {
+      resendCtrl = true;
+    }
+
+    ui.updateScore(you.score, self.score);
+    self.name = you.name;
+    self.score = you.score;
+    self.dead = you.dead;
+
+    if (you.health < self.health) {
+      draw.gotDamage(self.health - you.health);
+      draw.addBubble({
+        x: self.posX,
+        y: self.posY,
+        alpha: 100,
+        radius: 0.3 * (1 + self.health - you.health)
+      });
+    }
+
+    self.health = you.health;
+    self.latched = you.latched;
+    self.speedMul = you.speedMul;
+    self.item = you.item;
+    self.regen = you.regen;
+    self.overdrive = you.overdrive;
+    self.rubbership = you.rubbership;
+  }
+
+  if (physics.getPlanetSeed() != seed) {
+    physics.setPlanetSeed(seed);
+    objects.planets = physics.getPlanets(self.posX, self.posY);
+  }
+
+  if (projs.length) {
+    objects.bullets = [...objects.bullets, ...projs.filter(x => x)];
+  }
+
+  ui.updatePowerup(self, state);
+  physics.setPlanetSeed(seed);
+  ui.updatePlayerCount(count);
+  ui.updateHealthBar(self.health);
+  ui.updateDebugInfo(self.thrustBoost.toFixed(6));
 };
 
 const joinGame = () => {
@@ -3213,196 +5976,119 @@ const joinGame = () => {
     }
 
     ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
+    ws.binaryType = 'arraybuffer';
     inGame = true;
     ws.addEventListener('message', e => {
-      const obj = serial.decode(serial.recv(e.data));
+      let data = serial.recv(e.data);
+      if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+      const [cmd, obj] = serial.decode(data);
 
-      if (serial.is_token(obj)) {
-        ui.updateOnlineStatus('in game');
-        state.token = obj.token;
-      } else if (serial.is_pong(obj)) {
-        const now = performance.now();
-        ui.updateOnlineStatus(`in game, ping: ${Math.max(now - obj.time, 0).toFixed(1)}ms`);
-      } else if (serial.is_data(obj)) {
-        no_data = 0;
-        let you = null;
-        let ships = [];
-        let projs = null;
-        let oldHealth = {};
+      switch (cmd) {
+        case serial.C_token:
+          ui.updateOnlineStatus('in game');
+          state.token = obj.token;
+          break;
 
-        for (const ship of objects.ships) {
-          oldHealth[ship._id] = ship.health;
-        }
+        case serial.C_pong:
+          ui.updateOnlineStatus(`in game, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`);
+          break;
 
-        ({
-          you,
-          ships,
-          projs,
-          count,
-          rubber,
-          seed
-        } = obj);
-        you = serial.deserializeShip(you);
-        ships = ships.map(serial.deserializeShip);
-        projs = projs.map(serial.deserializeBullet);
-        draw.setRubber(rubber);
-        objects.ships = ships;
+        case serial.C_data:
+          no_data = 0;
+          obj.you = serial.deserializeShip(obj.you);
+          obj.ships = obj.ships.map(serial.deserializeShip);
+          obj.projs = obj.projs.map(serial.deserializeBullet);
+          gotData(obj);
+          state.dead = self.dead;
+          break;
 
-        for (const ship of ships) {
-          if (Object.prototype.hasOwnProperty.call(oldHealth, ship._id) && oldHealth[ship._id] > ship.health) {
+        case serial.C_board:
+          leaderboard = obj.board;
+          ui.updateLeaderboard(leaderboard);
+          break;
+
+        case serial.C_orient:
+          self.orient = obj.orient;
+          break;
+
+        case serial.C_unauth:
+          disconnect();
+          break;
+
+        case serial.C_killed:
+          draw.explosion(self, ticksPerFrame);
+          leaveGame();
+          ui.defeatedByPlayer(obj.ship);
+          break;
+
+        case serial.C_crashed:
+          draw.explosion(self, ticksPerFrame);
+          leaveGame();
+          ui.defeatedByCrash(obj.ship);
+          break;
+
+        case serial.C_hitpl:
+          draw.explosion(self, ticksPerFrame);
+          leaveGame();
+          ui.defeatedByPlanet(obj.ship);
+          self.velX = 0;
+          self.velY = 0;
+          break;
+
+        case serial.C_killship:
+          obj.ship = serial.deserializeShip(obj.ship);
+
+          if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+            draw.explosion(obj.ship, ticksPerFrame);
+          }
+
+          objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id);
+          break;
+
+        case serial.C_killproj:
+          objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj);
+          break;
+
+        case serial.C_minexpl:
+          {
+            const mine = serial.deserializeBullet(obj.mine);
             draw.addBubble({
-              x: ship.posX,
-              y: ship.posY,
-              alpha: 100,
-              radius: 0.3 * (1 + oldHealth[ship._id] - ship.health)
+              x: mine.posX,
+              y: mine.posY,
+              alpha: 200,
+              radius: 1
             });
-          }
-        }
-
-        if (self.dead) {
-          Object.assign(self, you);
-          state.dead = self.dead = false;
-        } else {
-          if (Math.abs(you.posX - self.posX) > 0.3) {
-            self.posX = (self.posX + you.posX) / 2;
-            self.velX = (self.velX + you.velX) / 2;
+            break;
           }
 
-          if (Math.abs(you.posY - self.posY) > 0.3) {
-            self.posY = (self.posY + you.posY) / 2;
-            self.velY = (self.velY + you.velY) / 2;
-          }
+        case serial.C_addpup:
+          objects.powerups.push(serial.deserializePowerup(obj.powerup));
+          ui.showPowerupAnimation();
+          break;
 
-          if (Math.abs(you.velX - self.velX) > 0.2) {
-            self.velX = you.velX;
-          }
+        case serial.C_delpup:
+          objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
+          break;
 
-          if (Math.abs(you.velY - self.velY) > 0.2) {
-            self.posY = you.posY;
-          }
+        case serial.C_deathk:
+          ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
+          break;
 
-          if (controls.isAccelerating() !== (you.accel !== null) || controls.isBraking() !== (you.brake !== null)) {
-            resendCtrl = true;
-          }
+        case serial.C_deathc:
+          ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
+          break;
 
-          ui.updateScore(you.score, self.score);
-          self.name = you.name;
-          self.score = you.score;
-          state.dead = self.dead = you.dead;
+        case serial.C_deathp:
+          ui.addDeathLog(`${obj.ship} crashed into a planet`);
+          break;
 
-          if (you.health < self.health) {
-            draw.gotDamage(self.health - you.health);
-            draw.addBubble({
-              x: self.posX,
-              y: self.posY,
-              alpha: 100,
-              radius: 0.3 * (1 + self.health - you.health)
-            });
-          }
-
-          self.health = you.health;
-          self.latched = you.latched;
-          self.speedMul = you.speedMul;
-          self.item = you.item;
-          self.regen = you.regen;
-          self.overdrive = you.overdrive;
-          self.rubbership = you.rubbership;
-        }
-
-        if (physics.getPlanetSeed() != seed) {
-          physics.setPlanetSeed(seed);
-          objects.planets = physics.getPlanets(self.posX, self.posY);
-        }
-
-        if (projs.length) {
-          objects.bullets = [...objects.bullets, ...projs.filter(x => x)];
-        }
-
-        ui.updatePowerup(self, state);
-        physics.setPlanetSeed(seed);
-        ui.updatePlayerCount(count);
-        ui.updateHealthBar(self.health);
-      } else if (serial.is_board(obj)) {
-        leaderboard = obj.board;
-        ui.updateLeaderboard(leaderboard);
-      } else if (serial.is_orient(obj)) {
-        self.orient = obj.orient;
-      } else if (serial.is_unauth(obj)) {
-        disconnect();
-      } else if (serial.is_killed(obj)) {
-        draw.explosion(self, tpf);
-        leaveGame();
-        ui.defeatedByPlayer(obj.ship);
-      } else if (serial.is_crashed(obj)) {
-        draw.explosion(self, tpf);
-        leaveGame();
-        ui.defeatedByCrash(obj.ship);
-      } else if (serial.is_hitpl(obj)) {
-        draw.explosion(self, tpf);
-        leaveGame();
-        ui.defeatedByPlanet(obj.ship);
-      } else if (serial.is_killship(obj)) {
-        const matching = objects.ships.find(ship => ship._id === obj.ship);
-
-        if (matching !== null) {
-          draw.explosion(matching, tpf);
-        }
-
-        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship);
-      } else if (serial.is_killproj(obj)) {
-        objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj);
-      } else if (serial.is_minexpl(obj)) {
-        const mine = serial.deserializeBullet(obj.mine);
-        draw.addBubble({
-          x: mine.posX,
-          y: mine.posY,
-          alpha: 200,
-          radius: 1
-        });
-      } else if (serial.is_addpup(obj)) {
-        objects.powerups.push(serial.deserializePowerup(obj.powerup));
-        ui.showPowerupAnimation();
-      } else if (serial.is_delpup(obj)) {
-        objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
-      } else if (serial.is_deathk(obj)) {
-        ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
-      } else if (serial.is_deathc(obj)) {
-        ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
-      } else if (serial.is_deathp(obj)) {
-        ui.addDeathLog(`${obj.ship} crashed into a planet`);
+        case serial.C_addpups:
+          objects.powerups.push(...obj.powerups.map(serial.deserializePowerup));
+          break;
       }
     });
     ws.addEventListener('open', () => {
-      state.dead = false;
-
-      if (connectTimer !== null) {
-        clearTimeout(connectTimer);
-        connectTimer = null;
-      }
-
-      let nick = document.getElementById('nick').value.trim();
-      const perk = document.getElementById('perkselect').value.trim();
-
-      if (nick.length < 1) {
-        nick = (100000000 * Math.random() | 0).toString();
-      } else {
-        Cookies.set('avaruuspeli-name', nick);
-      }
-
-      Cookies.set('avaruuspeli-perk', perk);
-      ui.updateOnlineStatus('waiting for spawn');
-      serial.send(ws, serial.e_join(nick, perk));
-      draw.checkSize();
-      ui.updateControls(state);
-      joystick.resetJoystickCenter();
-      pinger = setInterval(() => {
-        if (++no_data > 8 || ws == null) {
-          disconnect();
-          return;
-        }
-
-        serial.send(ws, serial.e_ping(performance.now()));
-      }, 500);
+      onConnect();
     });
     ws.addEventListener('close', () => {
       if (!state.dead) {
@@ -3459,38 +6145,7 @@ const serverTick = () => {
     resendCtrl = false;
   }
 
-  if (controls.isAccelerating()) {
-    physics.accel(self, chron.timeMs() - self.accel);
-  }
-
-  if (controls.isBraking()) {
-    physics.brake(self);
-  }
-
-  if (controls.isFiring() && self.fireWaitTicks <= 0 && !self.latched) {
-    physics.recoil(self);
-  }
-
-  physics.inertia(self);
-
-  if (!self.latched) {
-    physics.rubberband(self, rubber);
-    objects.planets = physics.getPlanets(self.posX, self.posY);
-    physics.gravityShip(self, objects.planets);
-  }
-
-  for (const ship of objects.ships) {
-    if (!ship.latched) {
-      physics.gravityShip(ship, physics.getPlanets(ship.posX, ship.posY));
-    }
-  }
-
-  for (const bullet of objects.bullets) {
-    if (bullet.type !== 'mine') {
-      physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
-    }
-  }
-
+  tick.serverTick(rubber);
   ui.updateColors(self.health, performance.now());
 };
 
@@ -3499,7 +6154,7 @@ let turnLeftRamp = 0;
 let turnRightRamp = 0;
 
 const partialTick = delta => {
-  tpf = 1.0 * delta / physics.MS_PER_TICK;
+  ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK;
 
   if (!self.latched) {
     // turning
@@ -3507,14 +6162,14 @@ const partialTick = delta => {
     const turnRight = controls.isTurningRight();
 
     if (turnLeft && !turnRight) {
-      self.orient -= turnLeftRamp * TURN_UNIT * tpf;
-      turnLeftRamp = Math.min(1, turnLeftRamp + tpf * 0.1);
-      physics.onTurn(self, chron.timeMs());
+      self.orient -= turnLeftRamp * TURN_UNIT * ticksPerFrame;
+      turnLeftRamp = Math.min(1, turnLeftRamp + ticksPerFrame * 0.1); //physics.onTurn(self, chron.timeMs())
+
       resendCtrl = true;
     } else if (turnRight && !turnLeft) {
-      self.orient += turnRightRamp * TURN_UNIT * tpf;
-      turnRightRamp = Math.min(1, turnRightRamp + tpf * 0.1);
-      physics.onTurn(self, chron.timeMs());
+      self.orient += turnRightRamp * TURN_UNIT * ticksPerFrame;
+      turnRightRamp = Math.min(1, turnRightRamp + ticksPerFrame * 0.1); //physics.onTurn(self, chron.timeMs())
+
       resendCtrl = true;
     }
 
@@ -3526,21 +6181,21 @@ const partialTick = delta => {
   } // interpolate
 
 
-  self.posX += tpf * self.velX;
-  self.posY += tpf * self.velY;
+  self.posX += ticksPerFrame * self.velX;
+  self.posY += ticksPerFrame * self.velY;
 
   for (const ship of objects.ships) {
-    ship.posX += tpf * ship.velX;
-    ship.posY += tpf * ship.velY;
+    ship.posX += ticksPerFrame * ship.velX;
+    ship.posY += ticksPerFrame * ship.velY;
   }
 
   for (const bullet of objects.bullets) {
     if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += tpf * bullet.velX;
-      bullet.posY += tpf * bullet.velY;
-      bullet.dist += tpf * bullet.velocity;
+      bullet.posX += ticksPerFrame * bullet.velX;
+      bullet.posY += ticksPerFrame * bullet.velY;
+      bullet.dist += ticksPerFrame * bullet.velocity;
     } else if (bullet.type == 'mine') {
-      bullet.dist += tpf / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
+      bullet.dist += ticksPerFrame / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
     }
   }
 
@@ -3570,8 +6225,8 @@ window.addEventListener('blur', () => {
 
   controls.unpress();
 }, true);
-window.addEventListener('beforeupload', () => {
-  serial.send(ws, serial.e_quit(state.token));
+window.addEventListener('beforeunload', () => {
+  if (ws) serial.send(ws, serial.e_quit(state.token));
 }, true);
 
 const tryReadCookies = () => {
@@ -3606,13 +6261,13 @@ const tryReadCookies = () => {
 const frame = time => {
   let delta = 0;
 
-  if (last_partial != null) {
-    delta = time - last_partial;
+  if (lastPartialTick != null) {
+    delta = time - lastPartialTick;
     partialTick(delta);
     ui.updateOpacity(delta);
   }
 
-  last_partial = time;
+  lastPartialTick = time;
   draw.frame(time, delta);
   window.requestAnimationFrame(frame);
 };

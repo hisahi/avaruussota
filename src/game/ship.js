@@ -5,6 +5,9 @@ const maths = require('../utils/maths')
 const Counter = require('../utils/counter')
 const shipCounter = new Counter()
 
+const SHIP_RECT_RADIUS = 2
+const SHIP_RADIUS = 1.35
+
 const newShip = () => ({
   posX: 0, posY: 0,           // position X, Y
   velX: 0, velY: 0,           // velocity X, Y
@@ -18,6 +21,7 @@ const newShip = () => ({
   firing: false,
   latched: false,
   fireWaitTicks: 0,
+  thrustBoost: 1,
 
   // perks
   firingInterval: 4,
@@ -35,6 +39,9 @@ const newShip = () => ({
   regen: 0,
   overdrive: 0,
 
+  lastDamageAt: null,
+  lastDamageBy: null,
+
   dead: false,
   _id: shipCounter.next()
 })
@@ -42,6 +49,7 @@ const newShip = () => ({
 const shipFields = [
   '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health',
   'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks',
+  'thrustBoost',
   'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul',
   'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'
 ]
@@ -259,17 +267,26 @@ const shipSystemFactory = handler => {
     }
   }
 
-  const moveShips = (delta, powerups) => {
+  const premoveShips = (delta) => {
     const shipList = getShips()
-    const powerupList = powerups.getPowerups()
     const shipCount = shipList.length
-    const powerupCount = powerupList.length
-    const dist = physics.MAX_SHIP_VELOCITY + 1
 
     for (let i = 0; i < shipCount; ++i) {
       const ship1 = shipList[i]
       ship1.posXnew = ship1.posX + delta * ship1.velX
       ship1.posYnew = ship1.posY + delta * ship1.velY
+    }
+  }
+
+  const moveShips = (delta, powerups) => {
+    const shipList = getShips()
+    const powerupList = powerups.getPowerups()
+    const shipCount = shipList.length
+    const powerupCount = powerupList.length
+    const dist = physics.ACTUAL_MAX_SHIP_VELOCITY + 1
+
+    for (let i = 0; i < shipCount; ++i) {
+      const ship1 = shipList[i]
 
       for (let j = 0; j < powerupCount; ++j) {
         const pup = powerupList[j]
@@ -298,12 +315,34 @@ const shipSystemFactory = handler => {
             [ship1.posXnew, ship1.posYnew],
             [ship2.posX, ship2.posY],
             [ship2.posXnew, ship2.posYnew])
-          if (0 <= t && t <= delta) {
-            ship1.posX = ship1.posX + t * ship1.velX
-            ship1.posY = ship1.posY + t * ship1.velY
-            ship2.posX = ship2.posX + t * ship2.velX
-            ship2.posY = ship2.posY + t * ship2.velY
+          if (0 <= t && t <= 1) {
+            ship1.posX = ship1.posX + t * delta * ship1.velX
+            ship1.posY = ship1.posY + t * delta * ship1.velY
+            ship2.posX = ship2.posX + t * delta * ship2.velX
+            ship2.posY = ship2.posY + t * delta * ship2.velY
             testShipShipCollision(ship1, ship2)
+          }
+        }
+      }
+
+      const planets = physics.getPlanets(ship1.posX, ship1.posY)
+      for (let j = 0; j < planets.length; ++j)  {
+        const planet = planets[j]
+        const search = planet.radius + SHIP_RADIUS
+        const searchSquare = search ** 2;
+        [ship1.posX, ship1.posY] = geom.lineClosestPointToPoint(
+          ship1.posX, ship1.posY, ship1.posXnew, ship1.posYnew,
+          planet.x, planet.y
+        )
+
+        if (Math.abs(ship1.posX - planet.x) < search 
+          && Math.abs(ship1.posY - planet.y) < search) {
+          if (maths.squarePair(ship1.posX - planet.x, ship1.posY - planet.y) 
+            < searchSquare) {
+            if (!ship1.dead) {
+              handleShipPlanetCollision(ship1, planet)
+            }
+            break
           }
         }
       }
@@ -320,7 +359,7 @@ const shipSystemFactory = handler => {
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
     const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy))
-      / (physics.MAX_SHIP_VELOCITY / 4)
+      / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4)
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1)
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1)
 
@@ -337,9 +376,7 @@ const shipSystemFactory = handler => {
     [ship1.velY, ship2.velY] = [ship2.velY, ship1.velY]
     
     if (ship1.health <= 0) {
-      if (ship2.health > 0 && 
-        Math.hypot(ship2.velX, ship2.velY)
-        > Math.hypot(ship1.velX, ship1.velY)) {
+      if (ship2.health > 0) {
         ++ship2.score
       }
       handler.onShipKilledByCrash(ship1, ship2)
@@ -347,9 +384,7 @@ const shipSystemFactory = handler => {
     }
 
     if (ship2.health <= 0) {
-      if (ship1.health > 0 && 
-        Math.hypot(ship1.velX, ship1.velY)
-        > Math.hypot(ship2.velX, ship2.velY)) {
+      if (ship1.health > 0) {
         ++ship1.score
       }
       handler.onShipKilledByCrash(ship2, ship1)
@@ -358,13 +393,11 @@ const shipSystemFactory = handler => {
   }
 
   const testShipShipCollision = (ship1, ship2) => {
-    const [p1, p2, p3] = geom.getCollisionPoints(ship1)
-    if (Math.abs(ship1.posX - ship2.posX) < 2 &&
-        Math.abs(ship1.posY - ship2.posY) < 2) {
+    if (Math.abs(ship1.posX - ship2.posX) < SHIP_RECT_RADIUS &&
+        Math.abs(ship1.posY - ship2.posY) < SHIP_RECT_RADIUS) {
+      const [p1, p2, p3] = geom.getCollisionPoints(ship1)
       const [q1, q2,   , q4] = geom.getShipPoints(ship2)
-      if (geom.pointInTriangle(q1, q2, q4, p1)
-        || geom.pointInTriangle(q1, q2, q4, p2)
-        || geom.pointInTriangle(q1, q2, q4, p3)) {
+      if (geom.testTriangleCollision(p1, p2, p3, q1, q2, q4)) {
         handleShipShipCollision(ship1, ship2)
       }
     }
@@ -372,74 +405,83 @@ const shipSystemFactory = handler => {
 
   const handleShipPlanetCollision = (ship, planet) => {
     const v = Math.hypot(ship.velX, ship.velY)
-    const playerAngle = Math.atan2(ship.velX, ship.velY)
-    const planetAngle = Math.atan2(planet.x - ship.posX,
-      planet.y - ship.posY)
-    const diffAngle = playerAngle - planetAngle + Math.PI
-    const col_mul = geom.getPlanetAngleMultiplier(ship.orient, playerAngle)
-    const col_vel = (physics.MAX_SHIP_VELOCITY / 1.5) * col_mul
-    let damage = v / col_vel * ship.planetDamageMul 
+    let dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY)
+    const d = 1 - (dist / (planet.radius - 1))
+    const col_mul = geom.getPlanetDamageMultiplier(
+      Math.sin(-ship.orient), Math.cos(-ship.orient),
+      ship.posX - planet.x, ship.posY - planet.y)
+    if (!col_mul) return
+    const col_vmul = geom.getPlanetDamageSpeedMultiplier(ship.velX, ship.velY,
+      ship.posX - planet.x, ship.posY - planet.y)
+    let damage = Math.max(v * col_mul * col_vmul, d) / physics.MAX_SHIP_VELOCITY * ship.planetDamageMul 
       * (physics.hasRubbership(ship) ? 0 : 1)
 
     if (!ship.accel 
       && v > 0 
-      && v < physics.LATCH_VELOCITY * (ship.brake !== null ? 1.5 : 1)) {
+      && v * col_mul < physics.LATCH_VELOCITY * (ship.brake !== null ? 1.75 : 1)) {
       latchToPlanet(ship, planet)
       return
     }
 
-    const dist = Math.hypot(ship.posX - planet.x, ship.posY - planet.y)
-    if (dist < (planet.radius - 1.5)) {
-      ship.posX = planet.x + (ship.posX - planet.x) / ((planet.radius + 2) / dist)
-      ship.posY = planet.y + (ship.posY - planet.y) / ((planet.radius + 2) / dist)
-    }
-
-    if (col_mul < 1.2 && ship.accel !== null) {
+    if (col_mul < 0.2 && ship.accel !== null) {
       damage *= 0.2
     }
 
-    if (damage > 0.05) {
-      ship.health -= damage * ship.healthMul
+    let offx = ship.posX - planet.x
+    let offy = ship.posY - planet.y;
+    [offx, offy] = geom.normalize(offx, offy)
+    const radius = planet.radius + SHIP_RADIUS
+
+    ship.posX = planet.x + offx * (radius + 0.5)
+    ship.posY = planet.y + offy * (radius + 0.5)
+
+    ship.velX = -ship.velX + offx * v * 2
+    ship.velY = -ship.velY + offy * v * 2
+    if (v > 0)
+      ([ship.velX, ship.velY] = geom.normalize(ship.velX, ship.velY, v))
+
+    if (damage >= 0.05) {
+      damageShip(ship, damage, null, null, (ship) => {
+        if (ship.lastDamageAt && chron.timeMs() - ship.lastDamageAt < 2500) {
+          const by = getShipById(ship.lastDamageBy)
+          if (by) ++by.score
+        }
+        handler.onShipKilledByPlanet(ship)
+        killShip(ship)
+      })
     }
 
-    if (ship.health <= 0) {
-      handler.onShipKilledByPlanet(ship)
-      killShip(ship)
+    if (ship.dead) {
       return
     }
-
-    ship.velX = v * Math.sin(diffAngle)
-    ship.velY = v * Math.cos(diffAngle)
-    ship.posX += (v / 8) * (ship.posX - planet.x)
-    ship.posY += (v / 8) * (ship.posY - planet.y)
-
-    if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {
+  
+    dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY)
+    if (planet.radius - dist > 0.25)
       latchToPlanet(ship, planet)
-    }
-  }
 
-  const findShipPlanetCollisions = () => {
-    getShips().forEach(ship => {
-      const planets = physics.getPlanets(ship.posX, ship.posY)
-      for (const planet of planets)  {
-        const search = planet.radius + 1.35
-        if (Math.abs(ship.posX - planet.x) < search 
-          && Math.abs(ship.posY - planet.y) < search) {
-          if (Math.hypot(ship.posX - planet.x, ship.posY - planet.y) 
-            < search) {
-            if (!ship.dead) {
-              handleShipPlanetCollision(ship, planet)
-            }
-            break
-          }
-        }
-      }
-    })
+    /*if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {
+      latchToPlanet(ship, planet)
+    }*/
   }
 
   const deleteShip = (ship) => {
     ship.dead = true
     removeShipById(ship._id)
+  }
+
+  const damageShip = (ship, damage, bullet, shooter, onDeath) => {
+    if (ship.dead) return
+    ship.health -= damage * ship.healthMul
+    if (shooter) {
+      ship.lastDamageAt = chron.timeMs()
+      ship.lastDamageBy = shooter._id
+    }
+    if (ship.health <= 0) {
+      if (shooter) {
+        ++shooter.score
+      }
+      onDeath(ship, bullet)
+    }
   }
 
   const killShip = (ship) => {
@@ -451,12 +493,13 @@ const shipSystemFactory = handler => {
     getShips,
     getShipById,
     getShipCount,
+    damageShip,
     removeShipById,
     newPlayerShip,
+    premoveShips,
     moveShips,
     killShip,
     deleteShip,
-    findShipPlanetCollisions,
     shipAcceleration
   }
 }

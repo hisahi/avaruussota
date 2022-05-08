@@ -2,6 +2,7 @@ const common = require('./common')
 
 module.exports = (callbacks) => {
   let dialogOpacity = 0
+  const DEBUG = false
 
   document.getElementById('scoreanimation').style.animation = 'none'
   document.getElementById('scoreanimation').style.visibility = 'hidden'
@@ -115,6 +116,11 @@ module.exports = (callbacks) => {
     document.getElementById('onlinestatus').textContent = text
   }
 
+  const updateDebugInfo = (text) => {
+    if (!DEBUG) return
+    document.getElementById('debuginfo').textContent = text
+  }
+
   const updateColors = (health, time) => {
     if (health < 0.3) {
       document.getElementById('yourscore').style.color = (time % 1000) >= 500 ? '#f88' : '#fff'
@@ -199,6 +205,12 @@ module.exports = (callbacks) => {
     callbacks.tryLockMouse(e)
     callbacks.joinGame()
   })
+  document.getElementById('btnhelp').addEventListener('click', () => {
+    document.getElementById('gamehelp').style.display = 'block'
+  })
+  document.getElementById('btnclosehelp').addEventListener('click', () => {
+    document.getElementById('gamehelp').style.display = 'none'
+  })
   document.getElementById('btnfs').addEventListener('click', () => {
     if (document.fullscreenElement) {
       document.exitFullscreen()
@@ -209,6 +221,9 @@ module.exports = (callbacks) => {
   document.getElementById('btnzoom').addEventListener('click', () => {
     callbacks.nextZoom(1)
   })
+
+  if (!DEBUG)
+    document.getElementById('debuginfo').style.display = 'none'
 
   return {
     updateZoomText,
@@ -221,6 +236,7 @@ module.exports = (callbacks) => {
     updateOpacity,
     updateLeaderboard,
     updateOnlineStatus,
+    updateDebugInfo,
     updateColors,
     updateScore,
     updatePlayerCount,

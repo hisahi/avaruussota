@@ -25,6 +25,8 @@ const powerupSystemFactory = handler => {
 
   const getPowerups = () => Object.values(powerups)
 
+  const clear = () => powerups = {}
+
   const trySpawnPowerup = (playerCount, ships, radius) => {
     let tries = playerCount * 4
     let count = 0
@@ -159,6 +161,7 @@ const powerupSystemFactory = handler => {
 
   return {
     getPowerups,
+    clear,
     applyPowerup,
     updateClosestPlayer,
     maybeSpawnPowerup,

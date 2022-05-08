@@ -10,10 +10,10 @@ const noop = (_) => _
 
 const onMessage = (ws, game, handle, shipId) => {
   return (msg) => {
-    const obj = serial.decode(serial.recv(msg))
-    if (serial.is_ping(obj)) {
+    const [cmd, obj] = serial.decode(serial.recv(msg))
+    if (cmd === serial.C_ping) {
       serial.send(ws, serial.e_pong(obj.time))
-    } else if (serial.is_join(obj)) {
+    } else if (cmd === serial.C_join) {
       const ship = game.newPlayer()
       const token = jwt.sign(ship._id, JWT_SECRET)
       game.setLastSocket(ship, ws)
@@ -33,13 +33,13 @@ const onMessage = (ws, game, handle, shipId) => {
         return serial.send(ws, serial.e_unauth())
       }
 
-      if (serial.is_quit(obj)) {
+      if (cmd === serial.C_quit) {
         game.leavePlayer(ship)
         game.disconnectSocket(ws)
         return
       }
 
-      handle(ship, obj)
+      handle(ship, cmd, obj)
     }
   }
 }

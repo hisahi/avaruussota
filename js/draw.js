@@ -348,7 +348,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
       ctx.lineWidth = 1.5 * window.devicePixelRatio
       drawShip(self)
       if (self.health < 0.75) {
-        const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 6)
+        const interval = 320 ** (self.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(self.velX, self.velY) / 4)
         if (!Object.prototype.hasOwnProperty.call(lastSmoke, self._id) || time - lastSmoke[self._id] > interval) {
           smokes.push({ 
             x: self.posX + 1.5 * Math.random() - 0.75, 
@@ -364,7 +364,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
       for (const ship of objects.ships) {
         drawShip(ship)
         if (ship.health < 0.75) {
-          const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 6)
+          const interval = 320 ** (ship.health * 0.35 + 0.9) / 2 / (1 + Math.hypot(ship.velX, ship.velY) / 4)
           if (!Object.prototype.hasOwnProperty.call(lastSmoke, ship._id) || time - lastSmoke[ship._id] > interval) {
             smokes.push({ 
               x: ship.posX + 1.5 * Math.random() - 0.75, 
