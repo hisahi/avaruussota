@@ -8,6 +8,7 @@
     "watch": "cross-env NODE_ENV=development concurrently \"nodemon --ignore 'js/' index.js\" \"npx webpack --watch\"",
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint .",
+    "build": "webpack",
     "webpack": "webpack"
   },
   "repository": {
