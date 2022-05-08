@@ -3,7 +3,9 @@ const physics = require('./physics')
 const Counter = require('../utils/counter')
 const bulletCounter = new Counter()
 
+const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 1.75
 const BULLET_DAMAGE_MULTIPLIER = 0.115
+const SHEAR_VEL = .777
 
 const newBullet = () => ({
   posX: 0, posY: 0,           // position X, Y
@@ -224,13 +226,15 @@ const bulletSystemFactory = handler => {
       speedFactor,
       damageFactor, 
       rangeSub,
-      canPickUp } = { 
+      canPickUp,
+      noShear } = { 
       extraDist: 0,
       orientOffset: 0,
       speedFactor: 1,
       damageFactor: 1,
       rangeSub: 0,
       canPickUp: true,
+      noShear: false,
       ...(extras || {}) }
 
     let typeSpeedMul = 1
@@ -244,9 +248,9 @@ const bulletSystemFactory = handler => {
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + Math.hypot(ship.velX, ship.velY),
-      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velX,
-      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velY,
+      velocity: BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + (noShear ? 0 : Math.hypot(ship.velX, ship.velY)),
+      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX * SHEAR_VEL),
+      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY * SHEAR_VEL),
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,

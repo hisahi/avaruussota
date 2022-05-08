@@ -1336,7 +1336,9 @@ const physics = __webpack_require__(/*! ./physics */ "./src/game/physics.js");
 const Counter = __webpack_require__(/*! ../utils/counter */ "./src/utils/counter.js");
 
 const bulletCounter = new Counter();
+const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 1.75;
 const BULLET_DAMAGE_MULTIPLIER = 0.115;
+const SHEAR_VEL = .777;
 
 const newBullet = () => ({
   posX: 0,
@@ -1556,7 +1558,8 @@ const bulletSystemFactory = handler => {
       speedFactor,
       damageFactor,
       rangeSub,
-      canPickUp
+      canPickUp,
+      noShear
     } = {
       extraDist: 0,
       orientOffset: 0,
@@ -1564,6 +1567,7 @@ const bulletSystemFactory = handler => {
       damageFactor: 1,
       rangeSub: 0,
       canPickUp: true,
+      noShear: false,
       ...(extras || {})
     };
     let typeSpeedMul = 1;
@@ -1577,9 +1581,9 @@ const bulletSystemFactory = handler => {
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: physics.BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + Math.hypot(ship.velX, ship.velY),
-      velX: typeSpeedMul * physics.BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velX,
-      velY: typeSpeedMul * physics.BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + ship.velY,
+      velocity: BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + (noShear ? 0 : Math.hypot(ship.velX, ship.velY)),
+      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX * SHEAR_VEL),
+      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY * SHEAR_VEL),
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,
@@ -1613,23 +1617,23 @@ module.exports = {
   \*****************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-const GRAV = 6.67e-11;
+const GRAV = 0 * 6.67e-11;
 const TICKS_PER_SECOND = 25;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
-const MAX_SHIP_VELOCITY = 64 / TICKS_PER_SECOND;
+const MAX_SHIP_VELOCITY = 1280 / TICKS_PER_SECOND;
 const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5;
-const ACCEL_BASE = 0.0875;
-const ACCEL_FACTOR = 0.000025;
-const MIN_SHIP_VELOCITY = 0.01;
-const LATCH_VELOCITY = 0.33;
-const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75;
+const ACCEL_BASE = 1.9375;
+const ACCEL_FACTOR = 0.00055;
+const MIN_SHIP_VELOCITY = 0.21;
+const LATCH_VELOCITY = 7;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
 const VIEW_DISTANCE = 55;
-const MAX_BULLET_DISTANCE = 75;
+const MAX_BULLET_DISTANCE = 100;
 const RUBBERBAND_BUFFER = 80;
 const RUBBERBAND_RADIUS_MUL = 80;
 const MINE_LIFETIME = 120;
-const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
+const INERTIA_MUL = 1;
+const RECOIL = 0.017; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
 const LCG = __webpack_require__(/*! ../utils/lcg */ "./src/utils/lcg.js");
 
@@ -1752,8 +1756,8 @@ const brake = ship => {
 };
 
 const recoil = ship => {
-  ship.velX -= 0.017 * Math.sin(-ship.orient);
-  ship.velY -= 0.017 * Math.cos(-ship.orient);
+  ship.velX -= RECOIL * Math.sin(-ship.orient);
+  ship.velY -= RECOIL * Math.cos(-ship.orient);
   checkMaxVelocity(ship);
 };
 
@@ -1842,7 +1846,6 @@ module.exports = {
   MAX_SHIP_VELOCITY,
   ACTUAL_MAX_SHIP_VELOCITY,
   MS_PER_TICK,
-  BULLET_VELOCITY,
   LATCH_VELOCITY,
   VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
@@ -2420,7 +2423,7 @@ const shipSystemFactory = handler => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX;
     const dy = ship1.velY - ship2.velY;
-    const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy)) / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
+    const damage = 0.2 * Math.sqrt(Math.hypot(dx, dy)) / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1);
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1);
 
@@ -5969,7 +5972,6 @@ const gotData = obj => {
   physics.setPlanetSeed(seed);
   ui.updatePlayerCount(count);
   ui.updateHealthBar(self.health);
-  ui.updateDebugInfo(self.thrustBoost.toFixed(6));
 };
 
 const joinGame = () => {
@@ -6164,6 +6166,7 @@ let turnRightRamp = 0;
 
 const partialTick = delta => {
   ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK;
+  const deltaSeconds = delta / 1000;
 
   if (!self.latched) {
     // turning
@@ -6190,21 +6193,21 @@ const partialTick = delta => {
   } // interpolate
 
 
-  self.posX += ticksPerFrame * self.velX;
-  self.posY += ticksPerFrame * self.velY;
+  self.posX += deltaSeconds * self.velX;
+  self.posY += deltaSeconds * self.velY;
 
   for (const ship of objects.ships) {
-    ship.posX += ticksPerFrame * ship.velX;
-    ship.posY += ticksPerFrame * ship.velY;
+    ship.posX += deltaSeconds * ship.velX;
+    ship.posY += deltaSeconds * ship.velY;
   }
 
   for (const bullet of objects.bullets) {
     if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += ticksPerFrame * bullet.velX;
-      bullet.posY += ticksPerFrame * bullet.velY;
-      bullet.dist += ticksPerFrame * bullet.velocity;
+      bullet.posX += deltaSeconds * bullet.velX;
+      bullet.posY += deltaSeconds * bullet.velY;
+      bullet.dist += deltaSeconds * bullet.velocity;
     } else if (bullet.type == 'mine') {
-      bullet.dist += ticksPerFrame / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
+      bullet.dist += deltaSeconds / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
     }
   }
 

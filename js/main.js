@@ -178,7 +178,6 @@ const gotData = obj => {
   physics.setPlanetSeed(seed)
   ui.updatePlayerCount(count)
   ui.updateHealthBar(self.health)
-  ui.updateDebugInfo(self.thrustBoost.toFixed(6))
 }
 
 const joinGame = () => {
@@ -370,6 +369,7 @@ let turnRightRamp = 0
 
 const partialTick = (delta) => {
   ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK
+  const deltaSeconds = delta / 1000
 
   if (!self.latched) {
     // turning
@@ -396,20 +396,20 @@ const partialTick = (delta) => {
   }
   
   // interpolate
-  self.posX += ticksPerFrame * self.velX
-  self.posY += ticksPerFrame * self.velY
+  self.posX += deltaSeconds * self.velX
+  self.posY += deltaSeconds * self.velY
 
   for (const ship of objects.ships) {
-    ship.posX += ticksPerFrame * ship.velX
-    ship.posY += ticksPerFrame * ship.velY
+    ship.posX += deltaSeconds * ship.velX
+    ship.posY += deltaSeconds * ship.velY
   }
   for (const bullet of objects.bullets) {
     if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += ticksPerFrame * bullet.velX
-      bullet.posY += ticksPerFrame * bullet.velY
-      bullet.dist += ticksPerFrame * bullet.velocity
+      bullet.posX += deltaSeconds * bullet.velX
+      bullet.posY += deltaSeconds * bullet.velY
+      bullet.dist += deltaSeconds * bullet.velocity
     } else if (bullet.type == 'mine') {
-      bullet.dist += ticksPerFrame / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
+      bullet.dist += deltaSeconds / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
     }
   }
   objects.bullets = objects.bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)

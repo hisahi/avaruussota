@@ -6,6 +6,8 @@ const shipSystemFactory = require('./game/ship').system
 const bulletSystemFactory = require('./game/bullet').system
 const powerupSystemFactory = require('./game/powerup').system
 
+const TICK_DELTA = 1 / physics.TICKS_PER_SECOND
+
 const gameFactory = (wss) => {
   let ships
   let bullets
@@ -158,15 +160,15 @@ const gameFactory = (wss) => {
 
   const oneTick = () => {
     const radius = Math.min(rubberbandRadius, rubberbandRadiusGoal)
-    ships.shipAcceleration(1, rubberbandRadius, rubberbandRadiusGoal)
+    ships.shipAcceleration(TICK_DELTA, rubberbandRadius, rubberbandRadiusGoal)
     powerups.maybeSpawnPowerup(ships, radius)
 
-    ships.premoveShips(1)
-    bullets.moveBullets(1, ships, powerups)
-    ships.moveShips(1, powerups)
+    ships.premoveShips(TICK_DELTA)
+    bullets.moveBullets(TICK_DELTA, ships, powerups)
+    ships.moveShips(TICK_DELTA, powerups)
     powerups.updatePowerups(ships)
 
-    updateRubberband(1)
+    updateRubberband(TICK_DELTA)
     announceNearby()
   }
 
@@ -275,7 +277,7 @@ const gameFactory = (wss) => {
     switch (ship.item) {
     case 'laser':
       ship.item = null
-      addProjectile(ship, 'laser', { speedFactor: 2.5, damageFactor: 4 })
+      addProjectile(ship, 'laser', { speedFactor: 2.75, damageFactor: 4, noShear: true })
       break
     case 'reheal':
       ship.item = null
@@ -290,7 +292,7 @@ const gameFactory = (wss) => {
     case 'mine':
       if (!ship.latched) {
         ship.item = null
-        addProjectile(ship, 'mine', { extraDist: -2 })
+        addProjectile(ship, 'mine', { extraDist: -2, noShear: true })
       }
       break
     case 'spread':

@@ -1,13 +1,12 @@
-const GRAV = 6.67e-11
+const GRAV = 0*6.67e-11
 const TICKS_PER_SECOND = 25
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND
-const MAX_SHIP_VELOCITY = 64 / TICKS_PER_SECOND
+const MAX_SHIP_VELOCITY = 1280 / TICKS_PER_SECOND
 const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5
-const ACCEL_BASE = 0.0875
-const ACCEL_FACTOR = 0.000025
-const MIN_SHIP_VELOCITY = 0.01
-const LATCH_VELOCITY = 0.33
-const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75
+const ACCEL_BASE = 1.9375
+const ACCEL_FACTOR = 0.00055
+const MIN_SHIP_VELOCITY = 0.21
+const LATCH_VELOCITY = 7
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
 const VIEW_DISTANCE = 55
 const MAX_BULLET_DISTANCE = 100
@@ -15,6 +14,7 @@ const RUBBERBAND_BUFFER = 80
 const RUBBERBAND_RADIUS_MUL = 80
 const MINE_LIFETIME = 120
 const INERTIA_MUL = 1
+const RECOIL = 0.017
 // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
 const LCG = require('../utils/lcg')
@@ -132,8 +132,8 @@ const brake = (ship) => {
 }
 
 const recoil = (ship) => {
-  ship.velX -= 0.017 * Math.sin(-ship.orient)
-  ship.velY -= 0.017 * Math.cos(-ship.orient)
+  ship.velX -= RECOIL * Math.sin(-ship.orient)
+  ship.velY -= RECOIL * Math.cos(-ship.orient)
   checkMaxVelocity(ship)
 }
 
@@ -216,7 +216,6 @@ module.exports = {
   MAX_SHIP_VELOCITY,
   ACTUAL_MAX_SHIP_VELOCITY,
   MS_PER_TICK,
-  BULLET_VELOCITY,
   LATCH_VELOCITY,
   VIEW_DISTANCE,
   MAX_BULLET_DISTANCE,
