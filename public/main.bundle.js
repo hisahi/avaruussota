@@ -1626,7 +1626,7 @@ const VIEW_DISTANCE = 55;
 const MAX_BULLET_DISTANCE = 75;
 const RUBBERBAND_BUFFER = 80;
 const RUBBERBAND_RADIUS_MUL = 80;
-const MINE_LIFETIME = 60;
+const MINE_LIFETIME = 120;
 const INERTIA_MUL = 1; // (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 90))
 
 const LCG = __webpack_require__(/*! ../utils/lcg */ "./src/utils/lcg.js");
