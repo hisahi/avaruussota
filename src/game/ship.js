@@ -358,7 +358,7 @@ const shipSystemFactory = handler => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
-    const damage = 0.4 * Math.sqrt(Math.hypot(dx, dy))
+    const damage = 0.2 * Math.sqrt(Math.hypot(dx, dy))
       / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4)
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1)
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1)
