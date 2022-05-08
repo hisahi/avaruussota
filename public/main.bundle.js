@@ -1618,6 +1618,8 @@ const TICKS_PER_SECOND = 25;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
 const MAX_SHIP_VELOCITY = 64 / TICKS_PER_SECOND;
 const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5;
+const ACCEL_BASE = 0.0875;
+const ACCEL_FACTOR = 0.000025;
 const MIN_SHIP_VELOCITY = 0.01;
 const LATCH_VELOCITY = 0.33;
 const BULLET_VELOCITY = MAX_SHIP_VELOCITY * 1.75;
@@ -1639,7 +1641,12 @@ let PLANET_SEED = 1340985553;
 
 const getAccelMul = accelTimeMs => {
   // time in milliseconds
-  return 0.0875 + 0.000025 * Math.min(accelTimeMs, 2500);
+  return ACCEL_BASE + ACCEL_FACTOR * Math.min(accelTimeMs, 2500);
+};
+
+const getAccelRamp = v => {
+  if (v < MAX_SHIP_VELOCITY) return 1;
+  return geom.unlerp1D(ACTUAL_MAX_SHIP_VELOCITY, v, MAX_SHIP_VELOCITY) ** 1.5;
 };
 
 const checkMinVelocity = ship => {
@@ -1726,8 +1733,9 @@ const accel = (ship, accelTimeMs) => {
     accelMul *= Math.sqrt(ship.speedMul);
   }
 
-  ship.velX += accelMul * Math.sin(-ship.orient);
-  ship.velY += accelMul * Math.cos(-ship.orient);
+  const v = Math.hypot(ship.velX, ship.velY);
+  ship.velX += accelMul * getAccelRamp(v) * Math.sin(-ship.orient);
+  ship.velY += accelMul * getAccelRamp(v) * Math.cos(-ship.orient);
   checkMaxVelocity(ship);
 };
 
@@ -1795,7 +1803,7 @@ const gravityShip = (ship, planets) => {
     }
   }
 
-  ship.thrustBoost = thrust;
+  ship.thrustBoost = Math.min(thrust, 3);
   checkMaxVelocity(ship);
 };
 
@@ -2606,9 +2614,9 @@ const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
 
 const SHIP_SCALE = 1.1;
 
-const lerp1D = (a, t, b) => {
-  return a + t * (b - a);
-};
+const lerp1D = (a, t, b) => a + t * (b - a);
+
+const unlerp1D = (a, v, b) => (v - a) / (b - a);
 
 const lerp2D = (a, t, b) => {
   return [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])];
@@ -2795,6 +2803,7 @@ const getThrusterPoints = ship => {
 module.exports = {
   lerp1D,
   lerp2D,
+  unlerp1D,
   normalize,
   pointInTriangle,
   rotatePoint,

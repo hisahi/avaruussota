@@ -2,9 +2,8 @@ const maths = require('../utils/maths')
 
 const SHIP_SCALE = 1.1
 
-const lerp1D = (a, t, b) => {
-  return a + t * (b - a)
-}
+const lerp1D = (a, t, b) => a + t * (b - a)
+const unlerp1D = (a, v, b) => (v - a) / (b - a)
 
 const lerp2D = (a, t, b) => {
   return [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])]
@@ -218,6 +217,7 @@ const getThrusterPoints = (ship) => {
 module.exports = {
   lerp1D,
   lerp2D,
+  unlerp1D,
   normalize,
   pointInTriangle,
   rotatePoint,
