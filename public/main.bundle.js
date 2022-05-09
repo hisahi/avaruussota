@@ -6259,20 +6259,20 @@ const joinGame = () => {
 
       case serial.C_killed:
         draw.explosion(self, ticksPerFrame);
-        wasKilled();
         ui.defeatedByPlayer(obj.ship);
+        wasKilled();
         break;
 
       case serial.C_crashed:
         draw.explosion(self, ticksPerFrame);
-        wasKilled();
         ui.defeatedByCrash(obj.ship);
+        wasKilled();
         break;
 
       case serial.C_hitpl:
         draw.explosion(self, ticksPerFrame);
-        wasKilled();
         ui.defeatedByPlanet(obj.ship);
+        wasKilled();
         self.velX = 0;
         self.velY = 0;
         break;
