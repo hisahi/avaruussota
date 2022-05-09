@@ -422,9 +422,22 @@ module.exports = (canvas, self, objects, state, cursor) => {
     if (bullet.type === 'bullet') {
       ctx.moveTo(x, y);
       ctx.arc(x, y, 0.3 * unitSize, 0, 2 * Math.PI);
+    } else if (bullet.type === 'knockout') {
+      const radius = 0.7 * unitSize;
+      ctx.beginPath();
+      ctx.moveTo(x + radius, y);
+
+      for (let i = 0; i < 7; ++i) {
+        const angle = i * Math.PI * 6 / 7;
+        ctx.lineTo(x + radius * Math.sin(angle), y + radius * Math.cos(angle));
+      }
+
+      ctx.lineTo(x + radius, y);
+      ctx.closePath();
+      ctx.stroke();
     } else if (bullet.type === 'laser') {
-      const x1 = cx + (self.posX - (bullet.posX + bullet.velX)) * unitSize;
-      const y1 = cy + (self.posY - (bullet.posY + bullet.velY)) * unitSize;
+      const x1 = cx + (self.posX - (bullet.posX + bullet.velX * 0.1)) * unitSize;
+      const y1 = cy + (self.posY - (bullet.posY + bullet.velY * 0.1)) * unitSize;
       ctx.moveTo(x, y);
       ctx.lineTo(x1, y1);
     } else if (bullet.type === 'mine') {
@@ -600,7 +613,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
 
     ctx.stroke();
 
-    if (!self.dead) {
+    if (state.ingame) {
       // draw red mask
       if (rubber > 1) {
         const gradient = ctx.createRadialGradient(cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber - 1) * unitSize, cx + self.posX * unitSize, cy + self.posY * unitSize, (rubber + physics.RUBBERBAND_BUFFER - 1) * unitSize);
@@ -611,9 +624,11 @@ module.exports = (canvas, self, objects, state, cursor) => {
         ctx.rect(ctx.canvas.width, 0, -ctx.canvas.width, ctx.canvas.height);
         ctx.fillStyle = gradient;
         ctx.fill();
-      } // draw player ship
+      }
+    }
 
-
+    if (!self.dead) {
+      // draw player ship
       ctx.lineWidth = 1.5 * window.devicePixelRatio;
       drawShip(self);
 
@@ -684,8 +699,8 @@ module.exports = (canvas, self, objects, state, cursor) => {
 
     for (const line of lines) {
       drawLine(line);
-      line.x += line.vx;
-      line.y += line.vy;
+      line.x += line.vx * delta;
+      line.y += line.vy * delta;
       line.angle += line.vangle;
       line.vx *= 0.99;
       line.vy *= 0.99;
@@ -718,9 +733,11 @@ module.exports = (canvas, self, objects, state, cursor) => {
 
     bubbles = bubbles.filter(bubble => bubble.alpha > 0);
 
-    if (!self.dead) {
+    if (state.ingame) {
       ctx.drawImage(fogCanvas, 0, 0);
+    }
 
+    if (!self.dead) {
       if (damageAlpha > 0) {
         ctx.beginPath();
         ctx.fillStyle = `rgba(128,0,0,${damageAlpha})`;
@@ -873,7 +890,7 @@ const physics = __webpack_require__(/*! ../src/game/physics */ "./src/game/physi
 const chron = __webpack_require__(/*! ../src/utils/chron */ "./src/utils/chron.js");
 
 module.exports = (self, objects, controls) => {
-  const serverTick = rubber => {
+  const serverTick = (delta, rubber) => {
     if (controls.isAccelerating()) {
       physics.accel(self, chron.timeMs() - self.accel);
     }
@@ -902,7 +919,14 @@ module.exports = (self, objects, controls) => {
 
     for (const bullet of objects.bullets) {
       if (bullet.type !== 'mine') {
-        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+        if (bullet.type !== 'laser') {
+          bullet.posX = bullet.syncPosX;
+          bullet.posY = bullet.syncPosY;
+          physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+        }
+
+        bullet.posX = bullet.syncPosX = bullet.syncPosX + bullet.velX * delta;
+        bullet.posY = bullet.syncPosY = bullet.syncPosY + bullet.velY * delta;
       }
     }
   };
@@ -934,24 +958,32 @@ module.exports = callbacks => {
     document.getElementById('btnzoom').textContent = `zoom: ${zoom * 100 | 0}%`;
   };
 
-  const showDialog = () => {
-    dialogOpacity = 0;
-    document.getElementById('dialogbox').style.opacity = '0';
-    document.getElementById('dialog').style.display = 'flex';
-    document.getElementById('stats').style.display = 'none';
-    document.getElementById('finalscore').style.display = 'block';
-    document.body.style.position = 'absolute';
-    document.body.style.overflow = '';
+  const showDialog = always => {
+    if (always || document.getElementById('dialog').style.display === 'none') {
+      dialogOpacity = 0;
+      document.getElementById('dialogbox').style.opacity = '0';
+      document.getElementById('dialog').style.display = 'flex';
+      document.getElementById('gamestats').style.display = 'none';
+      document.getElementById('finalscore').style.display = 'block';
+      document.body.style.position = 'absolute';
+      document.body.style.overflow = '';
+    }
+  };
+
+  const wasKilled = () => {
+    document.getElementById('leaderboardtitle').textContent = 'leaderboard when you died';
   };
 
   const hideDialog = () => {
     document.getElementById('dialog').style.display = 'none';
-    document.getElementById('stats').style.display = 'block';
+    document.getElementById('gamestats').style.display = 'block';
+    document.getElementById('playerCount').style.display = 'block';
+    document.getElementById('leaderboardtitle').textContent = 'live leaderboard';
     document.body.style.position = 'relative';
     document.body.style.overflow = 'hidden';
   };
 
-  const hideLose = () => {
+  const reset = () => {
     document.getElementById('defeat').style.display = 'none';
     document.getElementById('defeatcrash').style.display = 'none';
     document.getElementById('defeatplanet').style.display = 'none';
@@ -960,8 +992,13 @@ module.exports = callbacks => {
     document.getElementById('finalscore').style.display = 'none';
   };
 
+  const endOfBuffer = () => {
+    document.getElementById('playerCount').style.display = 'none';
+  };
+
   const disconnect = () => {
-    hideLose();
+    endOfBuffer();
+    reset();
     document.getElementById('disconnected').style.display = 'inline';
   };
 
@@ -1042,7 +1079,7 @@ module.exports = callbacks => {
     document.getElementById('onlinestatus').textContent = text;
   };
 
-  const updateDebugInfo = text => {
+  const debug = text => {
     if (!DEBUG) return;
     document.getElementById('debuginfo').textContent = text;
   };
@@ -1091,21 +1128,21 @@ module.exports = callbacks => {
   };
 
   const defeatedByPlayer = name => {
-    hideLose();
+    reset();
     document.getElementById('defeat').style.display = 'inline';
     document.getElementById('defeatname').style.display = 'inline';
     document.getElementById('defeatname').innerHTML = name;
   };
 
   const defeatedByCrash = name => {
-    hideLose();
+    reset();
     document.getElementById('defeatcrash').style.display = 'inline';
     document.getElementById('defeatname').style.display = 'inline';
     document.getElementById('defeatname').innerHTML = name;
   };
 
   const defeatedByPlanet = () => {
-    hideLose();
+    reset();
     document.getElementById('defeatplanet').style.display = 'inline';
   };
 
@@ -1150,13 +1187,14 @@ module.exports = callbacks => {
     updatePowerup,
     showDialog,
     hideDialog,
-    hideLose,
+    wasKilled,
+    reset,
+    endOfBuffer,
     disconnect,
     updateControls,
     updateOpacity,
     updateLeaderboard,
     updateOnlineStatus,
-    updateDebugInfo,
     updateColors,
     updateScore,
     updatePlayerCount,
@@ -1166,7 +1204,8 @@ module.exports = callbacks => {
     defeatedByCrash,
     defeatedByPlanet,
     joiningGame,
-    addDeathLog
+    addDeathLog,
+    debug
   };
 };
 
@@ -1331,14 +1370,15 @@ module.exports = callbacks => {
 
 const geom = __webpack_require__(/*! ../utils/geom */ "./src/utils/geom.js");
 
+const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
+
 const physics = __webpack_require__(/*! ./physics */ "./src/game/physics.js");
 
 const Counter = __webpack_require__(/*! ../utils/counter */ "./src/utils/counter.js");
 
 const bulletCounter = new Counter();
-const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 1.75;
+const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 2.4;
 const BULLET_DAMAGE_MULTIPLIER = 0.115;
-const SHEAR_VEL = .777;
 
 const newBullet = () => ({
   posX: 0,
@@ -1356,11 +1396,17 @@ const newBullet = () => ({
   canPickUp: true,
   type: 'bullet',
   damage: 1,
+  radius: 0.3,
+  punch: 0,
   dead: false,
   _id: bulletCounter.next()
 });
 
 const bulletFields = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'dist', 'velocity', 'shooter', 'shooterName', 'isHit', 'canPickUp', 'type', 'damage'];
+const bulletTypeRadius = {
+  bullet: 0.3,
+  knockout: 0.7
+};
 
 const bulletSystemFactory = handler => {
   let bullets = {};
@@ -1387,6 +1433,22 @@ const bulletSystemFactory = handler => {
     }
 
     ships.damageShip(ship, BULLET_DAMAGE_MULTIPLIER * bullet.damage, bullet, shooter, handler.killShipByBullet);
+
+    if (bullet.punch) {
+      if (ship.latched) {
+        ship.latched = false;
+        ship.velX += Math.sin(-ship.orient) * 25 * bullet.punch;
+        ship.velY += Math.cos(-ship.orient) * 25 * bullet.punch;
+      } else {
+        let hitX = ship.posX - bullet.posX;
+        let hitY = ship.posY - bullet.posY;
+        [hitX, hitY] = geom.normalize(hitX, hitY, 25 * bullet.punch);
+        ship.velX += hitX;
+        ship.velY += hitY;
+      }
+
+      physics.checkMaxVelocity(ship);
+    }
 
     if (bullet.type !== 'laser') {
       removeBullet(bullet);
@@ -1439,113 +1501,125 @@ const bulletSystemFactory = handler => {
         continue;
       }
 
-      if (bullet.type == 'bullet' || bullet.type == 'laser') {
-        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
-        const newX = bullet.posX + delta * bullet.velX;
-        const newY = bullet.posY + delta * bullet.velY;
-        let collisionShip = null;
+      switch (bullet.type) {
+        case 'bullet':
+        case 'knockout':
+          physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
+        // fall-through
 
-        for (let j = 0; j < shipCount; ++j) {
-          const ship = shipList[j];
+        case 'laser':
+          {
+            const newX = bullet.posX + delta * bullet.velX;
+            const newY = bullet.posY + delta * bullet.velY;
+            let collisionShip = null;
 
-          if (ship._id !== bullet.shooter && Math.abs(ship.posX - bullet.posX) < bullet.velocity && Math.abs(ship.posY - bullet.posY) < bullet.velocity) {
-            const t = geom.closestSynchroDistance([ship.posX, ship.posY], [ship.posXnew, ship.posYnew], [bullet.posX, bullet.posY], [newX, newY]);
+            for (let j = 0; j < shipCount; ++j) {
+              const ship = shipList[j];
 
-            if (0 <= t && t <= 1) {
-              ship.posX = geom.lerp1D(ship.posX, t, ship.posXnew);
-              ship.posY = geom.lerp1D(ship.posY, t, ship.posYnew);
-              const [p1, p2, p3] = geom.getCollisionPoints(ship);
+              if (ship._id !== bullet.shooter && Math.abs(ship.posX - bullet.posX) < 2 * delta * Math.abs(bullet.velX) + bullet.radius && Math.abs(ship.posY - bullet.posY) < 2 * delta * Math.abs(bullet.velY) + bullet.radius) {
+                const t = geom.closestSynchroDistance([ship.posX, ship.posY], [ship.posXnew, ship.posYnew], [bullet.posX, bullet.posY], [newX, newY]);
 
-              if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY], [newX, newY], p1, p2, p3)) {
-                collisionShip = ship;
+                if (-2 <= t && t <= 3) {
+                  [ship.posX, ship.posY] = geom.lerp2D([ship.posX, ship.posY], maths.clamp(0, t, 1), [ship.posXnew, ship.posYnew]);
+                  const [p1, p2, p3] = geom.getCollisionPoints(ship);
+                  const dist = geom.lineClosestDistanceToTriangle([bullet.posX, bullet.posY], [newX, newY], p1, p2, p3);
+
+                  if (dist < bullet.radius) {
+                    collisionShip = ship;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (collisionShip) {
+              handleShipBulletCollision(ships, collisionShip, bullet);
+            }
+
+            let collisionPowerup = null;
+
+            if (bullet.canPickUp) {
+              for (let j = 0; j < powerupCount; ++j) {
+                const powerup = powerupList[j];
+
+                if (Math.abs(powerup.posX - bullet.posX) < bullet.velocity && Math.abs(powerup.posY - bullet.posY) < bullet.velocity) {
+                  const r = powerup.pickupRadius * 0.35;
+                  const a1 = [powerup.posX - (bullet.posY - powerup.posY) * r, powerup.posY - (powerup.posX - bullet.posX) * r];
+                  const a2 = [powerup.posX + (bullet.posY - powerup.posY) * r, powerup.posY + (powerup.posX - bullet.posX) * r];
+
+                  if (geom.lineIntersectsLine([bullet.posX, bullet.posY], [newX, newY], a1, a2)) {
+                    collisionPowerup = powerup;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (collisionPowerup) {
+              handlePowerupBulletCollision(ships, collisionPowerup, bullet, powerups);
+            }
+
+            let hitPlanet = false;
+            const planets = physics.getPlanets(newX, newY);
+
+            for (const planet of planets) {
+              if (Math.hypot(planet.x - newX, planet.y - newY) < planet.radius) {
+                hitPlanet = true;
                 break;
               }
             }
+
+            if (hitPlanet) {
+              removeBullet(bullet);
+              continue;
+            }
+
+            bullet.posX = newX;
+            bullet.posY = newY;
+            bullet.dist += delta * bullet.velocity;
+            break;
           }
-        }
 
-        if (collisionShip) {
-          handleShipBulletCollision(ships, collisionShip, bullet);
-        }
+        case 'mine':
+          {
+            const r = 3 + 7 * Math.random() ** 3;
+            let primerShip = null;
 
-        let collisionPowerup = null;
+            for (let j = 0; j < shipCount; ++j) {
+              const ship = shipList[j];
 
-        if (bullet.canPickUp) {
-          for (let j = 0; j < powerupCount; ++j) {
-            const powerup = powerupList[j];
-
-            if (Math.abs(powerup.posX - bullet.posX) < bullet.velocity && Math.abs(powerup.posY - bullet.posY) < bullet.velocity) {
-              const r = powerup.pickupRadius * 0.35;
-              const a1 = [powerup.posX - (bullet.posY - powerup.posY) * r, powerup.posY - (powerup.posX - bullet.posX) * r];
-              const a2 = [powerup.posX + (bullet.posY - powerup.posY) * r, powerup.posY + (powerup.posX - bullet.posX) * r];
-
-              if (geom.lineIntersectsLine([bullet.posX, bullet.posY], [newX, newY], a1, a2)) {
-                collisionPowerup = powerup;
+              if (!ship.dead && bullet.shooter !== ship._id && Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY) < r) {
+                primerShip = ship;
                 break;
               }
             }
-          }
-        }
 
-        if (collisionPowerup) {
-          handlePowerupBulletCollision(ships, collisionPowerup, bullet, powerups);
-        }
+            if (primerShip || bullet.isHit) {
+              // blow up the mine
+              shipList.forEach(ship => {
+                if (bullet.shooter === ship._id) return;
 
-        let hitPlanet = false;
-        const planets = physics.getPlanets(newX, newY);
+                if (Math.abs(ship.posX - bullet.posX) > 15 || Math.abs(ship.posY - bullet.posY) > 15) {
+                  return;
+                }
 
-        for (const planet of planets) {
-          if (Math.hypot(planet.x - newX, planet.y - newY) < planet.radius) {
-            hitPlanet = true;
-            break;
-          }
-        }
+                let damage = 2 / Math.sqrt(Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY));
 
-        if (hitPlanet) {
-          removeBullet(bullet);
-          continue;
-        }
+                if (damage < 0.05) {
+                  damage = 0;
+                }
 
-        bullet.posX = newX;
-        bullet.posY = newY;
-        bullet.dist += delta * bullet.velocity;
-      } else if (bullet.type == 'mine') {
-        const r = 3 + 7 * Math.random() ** 3;
-        let primerShip = null;
-
-        for (let j = 0; j < shipCount; ++j) {
-          const ship = shipList[j];
-
-          if (!ship.dead && bullet.shooter !== ship._id && Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY) < r) {
-            primerShip = ship;
-            break;
-          }
-        }
-
-        if (primerShip || bullet.isHit) {
-          // blow up the mine
-          shipList.forEach(ship => {
-            if (bullet.shooter === ship._id) return;
-
-            if (Math.abs(ship.posX - bullet.posX) > 15 || Math.abs(ship.posY - bullet.posY) > 15) {
-              return;
+                const shooter = ships.getShipById(bullet.shooter);
+                ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet);
+              });
+              handler.onMineExplode(bullet);
+              removeBullet(bullet);
+              continue;
             }
 
-            let damage = 2 / Math.sqrt(Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY));
-
-            if (damage < 0.05) {
-              damage = 0;
-            }
-
-            const shooter = ships.getShipById(bullet.shooter);
-            ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet);
-          });
-          handler.onMineExplode(bullet);
-          removeBullet(bullet);
-          continue;
-        }
-
-        bullet.dist += physics.MAX_BULLET_DISTANCE / (physics.MINE_LIFETIME * physics.TICKS_PER_SECOND);
+            bullet.dist += physics.MAX_BULLET_DISTANCE / (physics.MINE_LIFETIME * physics.TICKS_PER_SECOND);
+            break;
+          }
       }
     }
   };
@@ -1559,7 +1633,8 @@ const bulletSystemFactory = handler => {
       damageFactor,
       rangeSub,
       canPickUp,
-      noShear
+      noShear,
+      punch
     } = {
       extraDist: 0,
       orientOffset: 0,
@@ -1568,6 +1643,7 @@ const bulletSystemFactory = handler => {
       rangeSub: 0,
       canPickUp: true,
       noShear: false,
+      punch: 0,
       ...(extras || {})
     };
     let typeSpeedMul = 1;
@@ -1576,20 +1652,24 @@ const bulletSystemFactory = handler => {
       typeSpeedMul = 0;
     }
 
+    typeSpeedMul *= speedFactor;
     let bullet = newBullet();
     bullet = { ...bullet,
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + (noShear ? 0 : Math.hypot(ship.velX, ship.velY)),
-      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX * SHEAR_VEL),
-      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY * SHEAR_VEL),
+      velocity: BULLET_VELOCITY * ship.bulletSpeedMul,
+      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX),
+      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY),
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,
       shooter: ship._id,
-      shooterName: ship.name
-    };
+      shooterName: ship.name,
+      radius: bulletTypeRadius[type] || bulletTypeRadius['bullet'],
+      punch: punch
+    }; //[bullet.velX, bullet.velY] = geom.normalize(bullet.velX, bullet.velY, bullet.velocity)
+
     bullets[bullet._id] = bullet;
     return bullet;
   };
@@ -1617,18 +1697,19 @@ module.exports = {
   \*****************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
-const GRAV = 0 * 6.67e-11;
+const GRAV = 6.67e-11;
 const TICKS_PER_SECOND = 25;
+const TICK_DELTA = 1 / TICKS_PER_SECOND;
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND;
-const MAX_SHIP_VELOCITY = 1280 / TICKS_PER_SECOND;
-const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5;
+const MAX_SHIP_VELOCITY = 1128 / TICKS_PER_SECOND;
+const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.25;
 const ACCEL_BASE = 1.9375;
 const ACCEL_FACTOR = 0.00055;
 const MIN_SHIP_VELOCITY = 0.21;
 const LATCH_VELOCITY = 7;
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5));
 const VIEW_DISTANCE = 55;
-const MAX_BULLET_DISTANCE = 100;
+const MAX_BULLET_DISTANCE = 125;
 const RUBBERBAND_BUFFER = 80;
 const RUBBERBAND_RADIUS_MUL = 80;
 const MINE_LIFETIME = 120;
@@ -1731,7 +1812,7 @@ const hasRegen = ship => {
 };
 
 const accel = (ship, accelTimeMs) => {
-  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health) * ship.thrustBoost * (hasOverdrive(ship) ? 2 : 1) * (ship.highAgility ? 1.33 : 1);
+  let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health) * ship.thrustBoost * (hasOverdrive(ship) ? 2 : 1) * (ship.highAgility ? 1.2 : 1);
 
   if (ship.speedMul !== 1) {
     accelMul *= Math.sqrt(ship.speedMul);
@@ -1766,22 +1847,28 @@ const gravityBullet = (bullet, planets) => {
     return;
   }
 
+  let gx = 0;
+  let gy = 0;
+  let gravity = false;
+
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y);
 
     if (d > planet.radius + 1 && d < 10 + planet.radius * 4) {
       const dx = planet.x - bullet.posX;
       const dy = planet.y - bullet.posY;
-      const r2 = Math.hypot(dx, dy) ** 2;
-      const f = GRAV * 1.5e+10 / r2 * planet.radius;
-      bullet.velX += f * dx;
-      bullet.velY += f * dy;
+      const r2 = dx ** 2 + dy ** 2;
+      const f = GRAV * 1.25e+11 / r2 * planet.radius;
+      gravity = true;
+      gx += f * dx;
+      gy += f * dy;
     }
   }
 
-  const d = Math.hypot(bullet.velX, bullet.velY);
-  bullet.velX *= bullet.velocity / d;
-  bullet.velY *= bullet.velocity / d;
+  if (gravity) {
+    bullet.velX += gx;
+    bullet.velY += gy;
+  }
 };
 
 const gravityShip = (ship, planets) => {
@@ -1792,22 +1879,22 @@ const gravityShip = (ship, planets) => {
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y);
 
-    if (d > planet.radius + 1.5 + dv * 0.3 && d < 10 + planet.radius * 4) {
+    if (d < 10 + planet.radius * 4) {
       const dx = planet.x - ship.posX;
       const dy = planet.y - ship.posY;
-      const r2 = Math.hypot(dx, dy) ** 2;
-      const f = GRAV * 1e+9 * planet.radius / r2 / (ship.accel !== null || ship.brake !== null ? 5 : 1);
+      const r2 = dx ** 2 + dy ** 2;
+      const f = GRAV * 2.2e+10 * planet.radius / r2 / (ship.brake !== null ? 3 : 1);
       ship.velX += f * dx;
       ship.velY += f * dy;
 
       if (ship.accel !== null) {
         const direction = geom.normalize(dx, dy);
-        thrust += 3 * Math.min(1, dv / MAX_SHIP_VELOCITY) ** 0.5 * (1000 * Math.max(0, f * (direction[0] * vector[0] + direction[1] * vector[1]))) ** 1.5;
+        thrust += 50 * Math.min(1, dv / MAX_SHIP_VELOCITY) ** 0.5 * Math.min(1, dv * 0.009) * Math.max(0, f * geom.dot2D(direction, vector));
       }
     }
   }
 
-  ship.thrustBoost = Math.min(thrust, 3);
+  ship.thrustBoost = Math.min(thrust, 1.5);
   checkMaxVelocity(ship);
 };
 
@@ -1845,6 +1932,7 @@ module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
   ACTUAL_MAX_SHIP_VELOCITY,
+  TICK_DELTA,
   MS_PER_TICK,
   LATCH_VELOCITY,
   VIEW_DISTANCE,
@@ -1852,6 +1940,7 @@ module.exports = {
   PLANET_CHUNK_SIZE,
   RUBBERBAND_BUFFER,
   MINE_LIFETIME,
+  checkMaxVelocity,
   hasOverdrive,
   hasRubbership,
   hasRegen,
@@ -1956,7 +2045,7 @@ const powerupSystemFactory = handler => {
   };
 
   const applyPowerup = (ship, powerup) => {
-    const ITEM_COUNT = 9;
+    const ITEM_COUNT = 10;
     const item = 0 | ITEM_COUNT * Math.random();
 
     switch (item) {
@@ -2010,6 +2099,13 @@ const powerupSystemFactory = handler => {
       case 8:
         if (ship.item === null) {
           ship.item = 'spread';
+        }
+
+        break;
+
+      case 9:
+        if (ship.item === null) {
+          ship.item = 'knockout';
         }
 
         break;
@@ -2164,6 +2260,8 @@ const shipSystemFactory = handler => {
     ship.velY = 0;
     ship.posX = x;
     ship.posY = y;
+    ship.posXnew = x;
+    ship.posYnew = y;
     ship.orient = -angle;
     ship.latched = ship.accel === null;
     handler.onShipLatch(ship);
@@ -2265,7 +2363,9 @@ const shipSystemFactory = handler => {
     }
 
     if (ship.fireWaitTicks <= 0) {
-      handler.addProjectile(ship, 'bullet');
+      handler.addProjectile(ship, 'bullet', {
+        speedFactor: ship.latched ? 1.25 : 1
+      });
       ship.fireWaitTicks = ship.firingInterval;
       return true;
     }
@@ -2384,10 +2484,10 @@ const shipSystemFactory = handler => {
           const t = geom.closestSynchroDistance([ship1.posX, ship1.posY], [ship1.posXnew, ship1.posYnew], [ship2.posX, ship2.posY], [ship2.posXnew, ship2.posYnew]);
 
           if (0 <= t && t <= 1) {
-            ship1.posX = ship1.posX + t * delta * ship1.velX;
-            ship1.posY = ship1.posY + t * delta * ship1.velY;
-            ship2.posX = ship2.posX + t * delta * ship2.velX;
-            ship2.posY = ship2.posY + t * delta * ship2.velY;
+            ship1.posX = geom.lerp1D(ship1.posX, t, ship1.posXnew);
+            ship1.posY = geom.lerp1D(ship1.posY, t, ship1.posYnew);
+            ship2.posX = geom.lerp1D(ship2.posX, t, ship2.posXnew);
+            ship2.posY = geom.lerp1D(ship2.posY, t, ship2.posYnew);
             testShipShipCollision(ship1, ship2);
           }
         }
@@ -2423,9 +2523,9 @@ const shipSystemFactory = handler => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX;
     const dy = ship1.velY - ship2.velY;
-    const damage = 0.2 * Math.sqrt(Math.hypot(dx, dy)) / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
-    const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1);
-    const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1);
+    const damage = 5 * Math.hypot(dx, dy) ** 0.25 / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
+    const dmg1 = damage * (physics.hasRubbership(ship1) ? 0 : 1);
+    const dmg2 = damage * (physics.hasRubbership(ship2) ? 0 : 1);
 
     if (dmg1 >= 0.1) {
       ship1.health -= dmg1 * ship1.healthMul;
@@ -2514,7 +2614,7 @@ const shipSystemFactory = handler => {
     }
 
     dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY);
-    if (planet.radius - dist > 0.25) latchToPlanet(ship, planet);
+    if (dist < planet.radius - 0.05) latchToPlanet(ship, planet);
     /*if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {
       latchToPlanet(ship, planet)
     }*/
@@ -2616,14 +2716,17 @@ module.exports = Counter;
 const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
 
 const SHIP_SCALE = 1.1;
+const clamp = maths.clamp;
 
 const lerp1D = (a, t, b) => a + t * (b - a);
 
 const unlerp1D = (a, v, b) => (v - a) / (b - a);
 
-const lerp2D = (a, t, b) => {
-  return [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])];
-};
+const lerp2D = (a, t, b) => [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])];
+
+const dot2D = (v1, v2) => v1[0] * v2[0] + v1[1] * v2[1];
+
+const dot2Dxy = (x1, y1, x2, y2) => x1 * y1 + x2 * y2;
 
 const normalize = (x, y, m) => {
   const d = Math.hypot(x, y);
@@ -2702,6 +2805,60 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
   return lineIntersectsLine(l1, l2, t1, t2) || lineIntersectsLine(l1, l2, t2, t3) || lineIntersectsLine(l1, l2, t3, t1);
 };
+/*
+const lerp1D = (a, t, b) => a + t * (b - a)
+const lerp2D = (a, t, b) => [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])]
+const clamp = (a, x, b) => Math.max(a, Math.min(x, b))
+*/
+
+
+const lineClosestDistanceToLine = (a1, a2, b1, b2) => {
+  if (lineIntersectsLine(a1, a2, b1, b2)) return 0;
+  const [rx, ry] = [b1[0] - a1[0], b1[1] - a1[1]];
+  const [ux, uy] = [a2[0] - a1[0], b1[1] - a1[1]];
+  const [vx, vy] = [b2[0] - b1[0], b2[1] - b1[1]];
+  const ru = rx * ux + ry * uy;
+  const rv = rx * vx + ry * vy;
+  const uu = ux * ux + uy * uy;
+  const uv = ux * vx + uy * vy;
+  const vv = vx * vx + vy * vy;
+  const det = uu * vv - uv * uv;
+  let s0, t0;
+
+  if (det < 1e-8) {
+    s0 = clamp(0, ru / uu, 1);
+    t0 = 0;
+  } else {
+    s0 = clamp(0, (ru * vv - rv * uv) / det, 1);
+    t0 = clamp(0, (ru * uv - rv * uu) / det, 1);
+  }
+
+  const s1 = clamp(0, (t0 * uv + ru) / uu, 1);
+  const t1 = clamp(0, (s0 * uv - rv) / vv, 1);
+  const as = lerp2D(a1, s1, a2);
+  const bt = lerp2D(b1, t1, b2);
+  return Math.hypot(as[0] - bt[0], as[1] - bt[1]);
+};
+
+const pointClosestDistanceToLine = (p1, l1, l2) => {
+  return 100;
+};
+
+const pointClosestDistanceToTriangle = (p, t1, t2, t3) => {
+  return Math.min(pointClosestDistanceToLine(p, t1, t2), pointClosestDistanceToLine(p, t2, t3), pointClosestDistanceToLine(p, t3, t1));
+};
+
+const lineClosestDistanceToTriangle = (l1, l2, t1, t2, t3) => {
+  if (pointInTriangle(t1, t2, t3, l1) || pointInTriangle(t1, t2, t3, l2)) {
+    return 0;
+  }
+
+  if (l1[0] === l2[0] && l1[1] === l2[1]) {
+    return pointClosestDistanceToTriangle(l1, t1, t2, t3);
+  }
+
+  return Math.min(lineClosestDistanceToLine(l1, l2, t1, t2), lineClosestDistanceToLine(l1, l2, t2, t3), lineClosestDistanceToLine(l1, l2, t3, t1));
+};
 
 const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
   for (let i = 0; i <= 8; ++i) {
@@ -2776,7 +2933,7 @@ const getShipPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0 * S, +2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.5 * S, -2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, 0 * S, -1.25 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.5 * S, -2 * S, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0, +2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.5 * S, -2 * S, ship.posX, ship.posY), rotatePointOffset(s, c, 0, -1.25 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.5 * S, -2 * S, ship.posX, ship.posY)];
 };
 
 const getCollisionPoints = ship => {
@@ -2788,7 +2945,7 @@ const getCollisionPoints = ship => {
 
   const s = Math.sin(ship.orient);
   const c = Math.cos(ship.orient);
-  return [rotatePointOffset(s, c, 0 * S, +2.6 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.87 * S, -2.6 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.87 * S, -2.6 * S, ship.posX, ship.posY)];
+  return [rotatePointOffset(s, c, 0, +2.5 * S, ship.posX, ship.posY), rotatePointOffset(s, c, +1.625 * S, -2.5 * S, ship.posX, ship.posY), rotatePointOffset(s, c, -1.625 * S, -2.5 * S, ship.posX, ship.posY)];
 };
 
 const getThrusterPoints = ship => {
@@ -2807,6 +2964,8 @@ module.exports = {
   lerp1D,
   lerp2D,
   unlerp1D,
+  dot2D,
+  dot2Dxy,
   normalize,
   pointInTriangle,
   rotatePoint,
@@ -2816,6 +2975,8 @@ module.exports = {
   lineClosestPointToPoint,
   closestSynchroDistance,
   lineIntersectsTriangle,
+  lineClosestDistanceToLine,
+  lineClosestDistanceToTriangle,
   wrapRadianAngle,
   withinBoundingSquare,
   getPlanetDamageMultiplier,
@@ -2884,10 +3045,13 @@ const squarePair = (x, y) => x ** 2 + y ** 2;
 
 const padFromBelow = (p, v) => p + (1 - p) * v;
 
+const clamp = (a, x, b) => Math.max(a, Math.min(x, b));
+
 module.exports = {
   randomSign,
   squarePair,
-  padFromBelow
+  padFromBelow,
+  clamp
 };
 
 /***/ }),
@@ -5772,7 +5936,6 @@ const common = __webpack_require__(/*! ./common */ "./js/common.js");
 
 const cursor = __webpack_require__(/*! ./cursor */ "./js/cursor.js");
 
-let inGame = false;
 let ws = null;
 let self = BASE_SELF;
 let connectTimer = null;
@@ -5783,6 +5946,7 @@ let objects = {
   planets: []
 };
 let state = {
+  ingame: false,
   dead: false,
   token: null,
   mouseLocked: false
@@ -5839,6 +6003,7 @@ const nextZoom = () => {
 };
 
 const onConnect = () => {
+  state.ingame = true;
   state.dead = false;
 
   if (connectTimer !== null) {
@@ -5862,7 +6027,7 @@ const onConnect = () => {
   ui.updateControls(state);
   joystick.resetJoystickCenter();
   pinger = setInterval(() => {
-    if (++no_data > 8 || ws == null) {
+    if (++no_data > 10 || ws == null) {
       disconnect();
       return;
     }
@@ -5872,7 +6037,14 @@ const onConnect = () => {
 };
 
 const disconnect = () => {
-  ui.disconnect();
+  if (self.dead) {
+    reset();
+    ui.endOfBuffer();
+  } else {
+    ui.disconnect();
+  }
+
+  wasKilled();
   leaveGame();
 };
 
@@ -5913,21 +6085,21 @@ const gotData = obj => {
     self.dead = false;
   } else {
     // if there is a high velocity difference, average them out
-    if (Math.abs(you.posX - self.posX) > 0.3) {
+    if (Math.abs(you.posX - self.posX) > 0.2) {
       self.posX = (self.posX + 3 * you.posX) / 4;
       self.velX = (self.velX + you.velX) / 2;
     }
 
-    if (Math.abs(you.posY - self.posY) > 0.3) {
+    if (Math.abs(you.posY - self.posY) > 0.2) {
       self.posY = (self.posY + 3 * you.posY) / 4;
       self.velY = (self.velY + you.velY) / 2;
     }
 
-    if (Math.abs(you.velX - self.velX) > 0.2) {
+    if (Math.abs(you.velX - self.velX) > 5) {
       self.velX = you.velX;
     }
 
-    if (Math.abs(you.velY - self.velY) > 0.2) {
+    if (Math.abs(you.velY - self.velY) > 5) {
       self.posY = you.posY;
     }
 
@@ -5965,7 +6137,10 @@ const gotData = obj => {
   }
 
   if (projs.length) {
-    objects.bullets = [...objects.bullets, ...projs.filter(x => x)];
+    objects.bullets = [...objects.bullets, ...projs.filter(x => x).map(bullet => ({ ...bullet,
+      syncPosX: bullet.posX,
+      syncPosY: bullet.posY
+    }))];
   }
 
   ui.updatePowerup(self, state);
@@ -5975,140 +6150,169 @@ const gotData = obj => {
 };
 
 const joinGame = () => {
-  if (!inGame) {
-    ui.joiningGame();
-    ui.hideDialog();
-    connectTimer = setTimeout(() => disconnect(), 5000);
-    let wsproto = here.protocol.replace('http', 'ws');
-    let port = here.port;
+  if (state.ingame && ws !== null) {
+    ws.close();
+  }
 
-    if (port) {
-      port = `:${port}`;
+  reset();
+  state.token = null;
+  ui.joiningGame();
+  ui.hideDialog();
+  connectTimer = setTimeout(() => disconnect(), 5000);
+  let wsproto = here.protocol.replace('http', 'ws');
+  let port = here.port;
+
+  if (port) {
+    port = `:${port}`;
+  }
+
+  ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
+  ws.binaryType = 'arraybuffer';
+  state.ingame = true;
+  ws.addEventListener('message', e => {
+    let data = serial.recv(e.data);
+    if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+    const [cmd, obj] = serial.decode(data);
+
+    switch (cmd) {
+      case serial.C_token:
+        ui.updateOnlineStatus('in game');
+        state.token = obj.token;
+        break;
+
+      case serial.C_pong:
+        ui.updateOnlineStatus(`${self.dead ? 'game over' : 'in game'}, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`);
+        break;
+
+      case serial.C_data:
+        no_data = 0;
+        obj.you = serial.deserializeShip(obj.you);
+        obj.ships = obj.ships.map(serial.deserializeShip);
+        obj.projs = obj.projs.map(serial.deserializeBullet);
+        gotData(obj);
+        state.dead = self.dead;
+        break;
+
+      case serial.C_board:
+        if (self.dead) break;
+        leaderboard = obj.board;
+        ui.updateLeaderboard(leaderboard);
+        break;
+
+      case serial.C_orient:
+        self.orient = obj.orient;
+        break;
+
+      case serial.C_unauth:
+        disconnect();
+        break;
+
+      case serial.C_killed:
+        draw.explosion(self, ticksPerFrame);
+        wasKilled();
+        ui.defeatedByPlayer(obj.ship);
+        break;
+
+      case serial.C_crashed:
+        draw.explosion(self, ticksPerFrame);
+        wasKilled();
+        ui.defeatedByCrash(obj.ship);
+        break;
+
+      case serial.C_hitpl:
+        draw.explosion(self, ticksPerFrame);
+        wasKilled();
+        ui.defeatedByPlanet(obj.ship);
+        self.velX = 0;
+        self.velY = 0;
+        break;
+
+      case serial.C_killship:
+        obj.ship = serial.deserializeShip(obj.ship);
+
+        if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+          draw.explosion(obj.ship, ticksPerFrame);
+        }
+
+        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id);
+        break;
+
+      case serial.C_killproj:
+        objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj);
+        break;
+
+      case serial.C_minexpl:
+        {
+          const mine = serial.deserializeBullet(obj.mine);
+          draw.addBubble({
+            x: mine.posX,
+            y: mine.posY,
+            alpha: 200,
+            radius: 1
+          });
+          break;
+        }
+
+      case serial.C_addpup:
+        if (self.dead) break;
+        objects.powerups.push(serial.deserializePowerup(obj.powerup));
+        ui.showPowerupAnimation();
+        break;
+
+      case serial.C_delpup:
+        objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
+        break;
+
+      case serial.C_deathk:
+        ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
+        break;
+
+      case serial.C_deathc:
+        ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
+        break;
+
+      case serial.C_deathp:
+        ui.addDeathLog(`${obj.ship} crashed into a planet`);
+        break;
+
+      case serial.C_addpups:
+        objects.powerups.push(...obj.powerups.map(serial.deserializePowerup));
+        break;
+    }
+  });
+  ws.addEventListener('open', () => {
+    onConnect();
+  });
+  ws.addEventListener('close', () => {
+    if (state.ingame) {
+      disconnect();
     }
 
-    ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
-    ws.binaryType = 'arraybuffer';
-    inGame = true;
-    ws.addEventListener('message', e => {
-      let data = serial.recv(e.data);
-      if (data instanceof ArrayBuffer) data = new Uint8Array(data);
-      const [cmd, obj] = serial.decode(data);
+    state.ingame = false;
+    state.dead = true;
+  });
+};
 
-      switch (cmd) {
-        case serial.C_token:
-          ui.updateOnlineStatus('in game');
-          state.token = obj.token;
-          break;
+const reset = () => {
+  objects.ships = [];
+  objects.bullets = [];
+  objects.powerups = [];
+  objects.planets = [];
+  draw.reset();
+  controls.reset();
+};
 
-        case serial.C_pong:
-          ui.updateOnlineStatus(`in game, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`);
-          break;
-
-        case serial.C_data:
-          no_data = 0;
-          obj.you = serial.deserializeShip(obj.you);
-          obj.ships = obj.ships.map(serial.deserializeShip);
-          obj.projs = obj.projs.map(serial.deserializeBullet);
-          gotData(obj);
-          state.dead = self.dead;
-          break;
-
-        case serial.C_board:
-          leaderboard = obj.board;
-          ui.updateLeaderboard(leaderboard);
-          break;
-
-        case serial.C_orient:
-          self.orient = obj.orient;
-          break;
-
-        case serial.C_unauth:
-          disconnect();
-          break;
-
-        case serial.C_killed:
-          draw.explosion(self, ticksPerFrame);
-          leaveGame();
-          ui.defeatedByPlayer(obj.ship);
-          break;
-
-        case serial.C_crashed:
-          draw.explosion(self, ticksPerFrame);
-          leaveGame();
-          ui.defeatedByCrash(obj.ship);
-          break;
-
-        case serial.C_hitpl:
-          draw.explosion(self, ticksPerFrame);
-          leaveGame();
-          ui.defeatedByPlanet(obj.ship);
-          self.velX = 0;
-          self.velY = 0;
-          break;
-
-        case serial.C_killship:
-          obj.ship = serial.deserializeShip(obj.ship);
-
-          if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
-            draw.explosion(obj.ship, ticksPerFrame);
-          }
-
-          objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id);
-          break;
-
-        case serial.C_killproj:
-          objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj);
-          break;
-
-        case serial.C_minexpl:
-          {
-            const mine = serial.deserializeBullet(obj.mine);
-            draw.addBubble({
-              x: mine.posX,
-              y: mine.posY,
-              alpha: 200,
-              radius: 1
-            });
-            break;
-          }
-
-        case serial.C_addpup:
-          objects.powerups.push(serial.deserializePowerup(obj.powerup));
-          ui.showPowerupAnimation();
-          break;
-
-        case serial.C_delpup:
-          objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
-          break;
-
-        case serial.C_deathk:
-          ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
-          break;
-
-        case serial.C_deathc:
-          ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
-          break;
-
-        case serial.C_deathp:
-          ui.addDeathLog(`${obj.ship} crashed into a planet`);
-          break;
-
-        case serial.C_addpups:
-          objects.powerups.push(...obj.powerups.map(serial.deserializePowerup));
-          break;
-      }
-    });
-    ws.addEventListener('open', () => {
-      onConnect();
-    });
-    ws.addEventListener('close', () => {
-      if (!state.dead) {
-        disconnect();
-      }
-
-      state.dead = true;
-    });
+const wasKilled = () => {
+  if (state.mouseLocked) {
+    document.exitPointerLock();
   }
+
+  no_data = 0;
+  state.dead = self.dead = true;
+  state.token = null;
+  ui.wasKilled();
+  ui.showDialog();
+  draw.checkSize();
 };
 
 const leaveGame = () => {
@@ -6117,23 +6321,8 @@ const leaveGame = () => {
     pinger = null;
   }
 
-  if (ws !== null) {
-    ws.close();
-  }
-
-  if (state.mouseLocked) {
-    document.exitPointerLock();
-  }
-
-  state.token = null;
   state.dead = self.dead = true;
-  ws = null;
-  inGame = false;
-  objects.ships = [];
-  objects.bullets = [];
-  objects.powerups = [];
-  draw.reset();
-  controls.reset();
+  state.ingame = false;
   ui.updateOnlineStatus('offline');
   ui.showDialog();
   draw.checkSize();
@@ -6141,7 +6330,7 @@ const leaveGame = () => {
 };
 
 const serverTick = () => {
-  if (!ws || !self) {
+  if (!ws || !self || self.dead) {
     self.velX *= 0.95;
     self.velY *= 0.95;
     return;
@@ -6156,7 +6345,7 @@ const serverTick = () => {
     resendCtrl = false;
   }
 
-  tick.serverTick(rubber);
+  tick.serverTick(physics.TICK_DELTA, rubber);
   ui.updateColors(self.health, performance.now());
 };
 
@@ -6165,8 +6354,8 @@ let turnLeftRamp = 0;
 let turnRightRamp = 0;
 
 const partialTick = delta => {
-  ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK;
-  const deltaSeconds = delta / 1000;
+  if (self.dead) return;
+  ticksPerFrame = 1000 * delta / physics.MS_PER_TICK;
 
   if (!self.latched) {
     // turning
@@ -6193,21 +6382,26 @@ const partialTick = delta => {
   } // interpolate
 
 
-  self.posX += deltaSeconds * self.velX;
-  self.posY += deltaSeconds * self.velY;
+  self.posX += delta * self.velX;
+  self.posY += delta * self.velY;
 
   for (const ship of objects.ships) {
-    ship.posX += deltaSeconds * ship.velX;
-    ship.posY += deltaSeconds * ship.velY;
+    ship.posX += delta * ship.velX;
+    ship.posY += delta * ship.velY;
   }
 
   for (const bullet of objects.bullets) {
-    if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += deltaSeconds * bullet.velX;
-      bullet.posY += deltaSeconds * bullet.velY;
-      bullet.dist += deltaSeconds * bullet.velocity;
-    } else if (bullet.type == 'mine') {
-      bullet.dist += deltaSeconds / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
+    switch (bullet.type) {
+      case 'bullet':
+      case 'laser':
+      case 'knockout':
+        bullet.posX += delta * bullet.velX;
+        bullet.posY += delta * bullet.velY;
+        bullet.dist += delta * bullet.velocity;
+        break;
+
+      case 'mine':
+        bullet.dist += delta / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME);
     }
   }
 
@@ -6275,7 +6469,7 @@ const frame = time => {
 
   if (lastPartialTick != null) {
     delta = time - lastPartialTick;
-    partialTick(delta);
+    partialTick(delta / 1000);
     ui.updateOpacity(delta);
   }
 
@@ -6290,9 +6484,12 @@ ui = __webpack_require__(/*! ./ui */ "./js/ui.js")({
   tryLockMouse,
   nextZoom
 });
+reset();
+ui.showDialog(true);
 leaveGame();
 updateZoomText();
-ui.hideLose();
+ui.endOfBuffer();
+ui.reset();
 tryReadCookies();
 })();
 

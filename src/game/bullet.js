@@ -1,11 +1,11 @@
 const geom = require('../utils/geom')
+const maths = require('../utils/maths')
 const physics = require('./physics')
 const Counter = require('../utils/counter')
 const bulletCounter = new Counter()
 
-const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 1.75
+const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 2.4
 const BULLET_DAMAGE_MULTIPLIER = 0.115
-const SHEAR_VEL = .777
 
 const newBullet = () => ({
   posX: 0, posY: 0,           // position X, Y
@@ -18,6 +18,8 @@ const newBullet = () => ({
   canPickUp: true,
   type: 'bullet',
   damage: 1,
+  radius: 0.3,
+  punch: 0,
 
   dead: false,
   _id: bulletCounter.next()
@@ -27,6 +29,11 @@ const bulletFields = [
   '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'dist', 'velocity',
   'shooter', 'shooterName', 'isHit', 'canPickUp', 'type', 'damage'
 ]
+
+const bulletTypeRadius = {
+  bullet: 0.3,
+  knockout: 0.7,
+}
 
 const bulletSystemFactory = handler => {
   let bullets = {}
@@ -50,6 +57,20 @@ const bulletSystemFactory = handler => {
       shooter.health += 0.01 * shooter.healthMul
     }
     ships.damageShip(ship, BULLET_DAMAGE_MULTIPLIER * bullet.damage, bullet, shooter, handler.killShipByBullet)
+    if (bullet.punch) {
+      if (ship.latched) {
+        ship.latched = false
+        ship.velX += Math.sin(-ship.orient) * 25 * bullet.punch
+        ship.velY += Math.cos(-ship.orient) * 25 * bullet.punch
+      } else {
+        let hitX = ship.posX - bullet.posX
+        let hitY = ship.posY - bullet.posY;
+        [hitX, hitY] = geom.normalize(hitX, hitY, 25 * bullet.punch)
+        ship.velX += hitX
+        ship.velY += hitY
+      }
+      physics.checkMaxVelocity(ship)
+    }
     if (bullet.type !== 'laser') {
       removeBullet(bullet)
     }
@@ -95,9 +116,13 @@ const bulletSystemFactory = handler => {
         continue
       }
 
-      if (bullet.type == 'bullet' || bullet.type == 'laser') {
+      switch (bullet.type) {
+      case 'bullet':
+      case 'knockout':
         physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
-
+        // fall-through
+      case 'laser':
+      {
         const newX = bullet.posX + delta * bullet.velX
         const newY = bullet.posY + delta * bullet.velY
 
@@ -105,19 +130,20 @@ const bulletSystemFactory = handler => {
         for (let j = 0; j < shipCount; ++j) {
           const ship = shipList[j]
           if (ship._id !== bullet.shooter
-            && Math.abs(ship.posX - bullet.posX) < bullet.velocity
-            && Math.abs(ship.posY - bullet.posY) < bullet.velocity) {
+            && Math.abs(ship.posX - bullet.posX) < 2 * delta * Math.abs(bullet.velX) + bullet.radius
+            && Math.abs(ship.posY - bullet.posY) < 2 * delta * Math.abs(bullet.velY) + bullet.radius) {
             const t = geom.closestSynchroDistance(
               [ship.posX, ship.posY],
               [ship.posXnew, ship.posYnew],
               [bullet.posX, bullet.posY],
               [newX, newY])
-            if (0 <= t && t <= 1) {
-              ship.posX = geom.lerp1D(ship.posX, t, ship.posXnew)
-              ship.posY = geom.lerp1D(ship.posY, t, ship.posYnew)
+            if (-2 <= t && t <= 3) {
+              [ship.posX, ship.posY] = geom.lerp2D([ship.posX, ship.posY],
+                maths.clamp(0, t, 1), [ship.posXnew, ship.posYnew])
               const [p1, p2, p3] = geom.getCollisionPoints(ship)
-              if (geom.lineIntersectsTriangle([bullet.posX, bullet.posY],
-                [newX, newY], p1, p2, p3)) {
+              const dist = geom.lineClosestDistanceToTriangle(
+                [bullet.posX, bullet.posY], [newX, newY], p1, p2, p3)
+              if (dist < bullet.radius) {
                 collisionShip = ship
                 break
               }
@@ -174,7 +200,10 @@ const bulletSystemFactory = handler => {
         bullet.posX = newX
         bullet.posY = newY
         bullet.dist += delta * bullet.velocity
-      } else if (bullet.type == 'mine') {
+        break
+      }
+      case 'mine':
+      {
         const r = 3 + 7 * Math.random() ** 3
         let primerShip = null
         
@@ -214,6 +243,8 @@ const bulletSystemFactory = handler => {
         }
 
         bullet.dist += physics.MAX_BULLET_DISTANCE / (physics.MINE_LIFETIME * physics.TICKS_PER_SECOND)
+        break
+      }
       }
     }
   }
@@ -227,7 +258,8 @@ const bulletSystemFactory = handler => {
       damageFactor, 
       rangeSub,
       canPickUp,
-      noShear } = { 
+      noShear,
+      punch } = { 
       extraDist: 0,
       orientOffset: 0,
       speedFactor: 1,
@@ -235,12 +267,14 @@ const bulletSystemFactory = handler => {
       rangeSub: 0,
       canPickUp: true,
       noShear: false,
+      punch: 0,
       ...(extras || {}) }
 
     let typeSpeedMul = 1
     if (type == 'mine') {
       typeSpeedMul = 0
     }
+    typeSpeedMul *= speedFactor
 
     let bullet = newBullet()
     bullet = {
@@ -248,15 +282,18 @@ const bulletSystemFactory = handler => {
       posX: p1[0] + Math.sin(-ship.orient + orientOffset) * extraDist,
       posY: p1[1] + Math.cos(-ship.orient + orientOffset) * extraDist,
       type: type,
-      velocity: BULLET_VELOCITY * ship.bulletSpeedMul * speedFactor + (noShear ? 0 : Math.hypot(ship.velX, ship.velY)),
-      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX * SHEAR_VEL),
-      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY * SHEAR_VEL),
+      velocity: BULLET_VELOCITY * ship.bulletSpeedMul,
+      velX: typeSpeedMul * BULLET_VELOCITY * Math.sin(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velX),
+      velY: typeSpeedMul * BULLET_VELOCITY * Math.cos(-ship.orient + orientOffset) * ship.bulletSpeedMul + (noShear ? 0 : ship.velY),
       dist: rangeSub,
       damage: damageFactor,
       canPickUp: canPickUp,
       shooter: ship._id,
-      shooterName: ship.name
+      shooterName: ship.name,
+      radius: bulletTypeRadius[type] || bulletTypeRadius['bullet'],
+      punch: punch
     }
+    //[bullet.velX, bullet.velY] = geom.normalize(bullet.velX, bullet.velY, bullet.velocity)
     bullets[bullet._id] = bullet
     return bullet
   }

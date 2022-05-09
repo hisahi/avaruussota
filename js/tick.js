@@ -2,7 +2,7 @@ const physics = require('../src/game/physics')
 const chron = require('../src/utils/chron')
 
 module.exports = (self, objects, controls) => {
-  const serverTick = (rubber) => {
+  const serverTick = (delta, rubber) => {
     if (controls.isAccelerating()) {
       physics.accel(self, chron.timeMs() - self.accel)
     }
@@ -29,7 +29,13 @@ module.exports = (self, objects, controls) => {
 
     for (const bullet of objects.bullets) {
       if (bullet.type !== 'mine') {
-        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
+        if (bullet.type !== 'laser') {
+          bullet.posX = bullet.syncPosX
+          bullet.posY = bullet.syncPosY
+          physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
+        }
+        bullet.posX = bullet.syncPosX = bullet.syncPosX + bullet.velX * delta
+        bullet.posY = bullet.syncPosY = bullet.syncPosY + bullet.velY * delta
       }
     }
   }

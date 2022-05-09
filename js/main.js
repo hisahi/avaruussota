@@ -11,7 +11,6 @@ const canvas = document.getElementById('screen')
 const common = require('./common')
 const cursor = require('./cursor')
 
-let inGame = false
 let ws = null
 let self = BASE_SELF
 let connectTimer = null
@@ -23,6 +22,7 @@ let objects = {
   planets: []
 }
 let state = {
+  ingame: false,
   dead: false,
   token: null,
   mouseLocked: false
@@ -75,6 +75,7 @@ const nextZoom = () => {
 }
 
 const onConnect = () => {
+  state.ingame = true
   state.dead = false
   if (connectTimer !== null) {
     clearTimeout(connectTimer)
@@ -94,7 +95,7 @@ const onConnect = () => {
   ui.updateControls(state)
   joystick.resetJoystickCenter()
   pinger = setInterval(() => {
-    if (++no_data > 8 || ws == null) {
+    if (++no_data > 10 || ws == null) {
       disconnect()
       return
     }
@@ -103,7 +104,13 @@ const onConnect = () => {
 }
 
 const disconnect = () => {
-  ui.disconnect()
+  if (self.dead) {
+    reset()
+    ui.endOfBuffer()
+  } else {
+    ui.disconnect()
+  }
+  wasKilled()
   leaveGame()
 }
 
@@ -132,18 +139,18 @@ const gotData = obj => {
     self.dead = false
   } else {
     // if there is a high velocity difference, average them out
-    if (Math.abs(you.posX - self.posX) > 0.3) {
+    if (Math.abs(you.posX - self.posX) > 0.2) {
       self.posX = (self.posX + 3 * you.posX) / 4
       self.velX = (self.velX + you.velX) / 2
     }
-    if (Math.abs(you.posY - self.posY) > 0.3) {
+    if (Math.abs(you.posY - self.posY) > 0.2) {
       self.posY = (self.posY + 3 * you.posY) / 4
       self.velY = (self.velY + you.velY) / 2
     }
-    if (Math.abs(you.velX - self.velX) > 0.2) {
+    if (Math.abs(you.velX - self.velX) > 5) {
       self.velX = you.velX
     }
-    if (Math.abs(you.velY - self.velY) > 0.2) {
+    if (Math.abs(you.velY - self.velY) > 5) {
       self.posY = you.posY
     }
     
@@ -172,7 +179,8 @@ const gotData = obj => {
     objects.planets = physics.getPlanets(self.posX, self.posY)
   }
   if (projs.length) {
-    objects.bullets = [...objects.bullets, ...projs.filter(x => x)]
+    objects.bullets = [...objects.bullets, ...projs.filter(x => x).
+      map(bullet => ({ ...bullet, syncPosX: bullet.posX, syncPosY: bullet.posY }))]
   }
   ui.updatePowerup(self, state)
   physics.setPlanetSeed(seed)
@@ -181,137 +189,164 @@ const gotData = obj => {
 }
 
 const joinGame = () => {
-  if (!inGame) {
-    ui.joiningGame()
-    ui.hideDialog()
-
-    connectTimer = setTimeout(() => disconnect(), 5000)
-
-    let wsproto = here.protocol.replace('http', 'ws')
-    let port = here.port
-    if (port) {
-      port = `:${port}`
-    }
-    ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`)
-    ws.binaryType = 'arraybuffer'
-    inGame = true
-
-    ws.addEventListener('message', (e) => {
-      let data = serial.recv(e.data)
-      if (data instanceof ArrayBuffer)
-        data = new Uint8Array(data)
-      const [cmd, obj] = serial.decode(data)
-
-      switch (cmd) {
-      case serial.C_token:
-        ui.updateOnlineStatus('in game')
-        state.token = obj.token
-        break
-
-      case serial.C_pong:
-        ui.updateOnlineStatus(
-          `in game, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`)
-        break
-
-      case serial.C_data:
-        no_data = 0
-        obj.you = serial.deserializeShip(obj.you)
-        obj.ships = obj.ships.map(serial.deserializeShip)
-        obj.projs = obj.projs.map(serial.deserializeBullet)
-        gotData(obj)
-        state.dead = self.dead
-        break
-
-      case serial.C_board:
-        leaderboard = obj.board
-        ui.updateLeaderboard(leaderboard)
-        break
-
-      case serial.C_orient:
-        self.orient = obj.orient
-        break
-
-      case serial.C_unauth:
-        disconnect()
-        break
-
-      case serial.C_killed:
-        draw.explosion(self, ticksPerFrame)
-        leaveGame()
-        ui.defeatedByPlayer(obj.ship)
-        break
-
-      case serial.C_crashed:
-        draw.explosion(self, ticksPerFrame)
-        leaveGame()
-        ui.defeatedByCrash(obj.ship)
-        break
-
-      case serial.C_hitpl:
-        draw.explosion(self, ticksPerFrame)
-        leaveGame()
-        ui.defeatedByPlanet(obj.ship)
-        self.velX = 0
-        self.velY = 0
-        break
-
-      case serial.C_killship:
-        obj.ship = serial.deserializeShip(obj.ship)
-        if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
-          draw.explosion(obj.ship, ticksPerFrame)
-        }
-        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id)
-        break
-
-      case serial.C_killproj:
-        objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj)
-        break
-
-      case serial.C_minexpl:
-      {
-        const mine = serial.deserializeBullet(obj.mine)
-        draw.addBubble({ x: mine.posX, y: mine.posY, alpha: 200, radius: 1 })
-        break
-      }
-
-      case serial.C_addpup:
-        objects.powerups.push(serial.deserializePowerup(obj.powerup))
-        ui.showPowerupAnimation()
-        break
-
-      case serial.C_delpup:
-        objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup)
-        break
-
-      case serial.C_deathk:
-        ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`)
-        break
-
-      case serial.C_deathc:
-        ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`)
-        break
-
-      case serial.C_deathp:
-        ui.addDeathLog(`${obj.ship} crashed into a planet`)
-        break
-
-      case serial.C_addpups:
-        objects.powerups.push(...obj.powerups.map(serial.deserializePowerup))
-        break
-      }
-    })
-    
-    ws.addEventListener('open', () => {
-      onConnect()
-    })
-    
-    ws.addEventListener('close', () => {
-      if (!state.dead) {
-        disconnect()
-      }
-      state.dead = true
-    })
+  if (state.ingame && ws !== null) {
+    ws.close()
   }
+  reset()
+  state.token = null
+  ui.joiningGame()
+  ui.hideDialog()
+
+  connectTimer = setTimeout(() => disconnect(), 5000)
+
+  let wsproto = here.protocol.replace('http', 'ws')
+  let port = here.port
+  if (port) {
+    port = `:${port}`
+  }
+  ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`)
+  ws.binaryType = 'arraybuffer'
+  state.ingame = true
+
+  ws.addEventListener('message', (e) => {
+    let data = serial.recv(e.data)
+    if (data instanceof ArrayBuffer)
+      data = new Uint8Array(data)
+    const [cmd, obj] = serial.decode(data)
+
+    switch (cmd) {
+    case serial.C_token:
+      ui.updateOnlineStatus('in game')
+      state.token = obj.token
+      break
+
+    case serial.C_pong:
+      ui.updateOnlineStatus(
+        `${self.dead ? 'game over' : 'in game'}, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`)
+      break
+
+    case serial.C_data:
+      no_data = 0
+      obj.you = serial.deserializeShip(obj.you)
+      obj.ships = obj.ships.map(serial.deserializeShip)
+      obj.projs = obj.projs.map(serial.deserializeBullet)
+      gotData(obj)
+      state.dead = self.dead
+      break
+
+    case serial.C_board:
+      if (self.dead) break
+      leaderboard = obj.board
+      ui.updateLeaderboard(leaderboard)
+      break
+
+    case serial.C_orient:
+      self.orient = obj.orient
+      break
+
+    case serial.C_unauth:
+      disconnect()
+      break
+
+    case serial.C_killed:
+      draw.explosion(self, ticksPerFrame)
+      wasKilled()
+      ui.defeatedByPlayer(obj.ship)
+      break
+
+    case serial.C_crashed:
+      draw.explosion(self, ticksPerFrame)
+      wasKilled()
+      ui.defeatedByCrash(obj.ship)
+      break
+
+    case serial.C_hitpl:
+      draw.explosion(self, ticksPerFrame)
+      wasKilled()
+      ui.defeatedByPlanet(obj.ship)
+      self.velX = 0
+      self.velY = 0
+      break
+
+    case serial.C_killship:
+      obj.ship = serial.deserializeShip(obj.ship)
+      if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+        draw.explosion(obj.ship, ticksPerFrame)
+      }
+      objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id)
+      break
+
+    case serial.C_killproj:
+      objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj)
+      break
+
+    case serial.C_minexpl:
+    {
+      const mine = serial.deserializeBullet(obj.mine)
+      draw.addBubble({ x: mine.posX, y: mine.posY, alpha: 200, radius: 1 })
+      break
+    }
+
+    case serial.C_addpup:
+      if (self.dead) break
+      objects.powerups.push(serial.deserializePowerup(obj.powerup))
+      ui.showPowerupAnimation()
+      break
+
+    case serial.C_delpup:
+      objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup)
+      break
+
+    case serial.C_deathk:
+      ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`)
+      break
+
+    case serial.C_deathc:
+      ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`)
+      break
+
+    case serial.C_deathp:
+      ui.addDeathLog(`${obj.ship} crashed into a planet`)
+      break
+
+    case serial.C_addpups:
+      objects.powerups.push(...obj.powerups.map(serial.deserializePowerup))
+      break
+    }
+  })
+  
+  ws.addEventListener('open', () => {
+    onConnect()
+  })
+  
+  ws.addEventListener('close', () => {
+    if (state.ingame) {
+      disconnect()
+    }
+    state.ingame = false
+    state.dead = true
+  })
+}
+
+const reset = () => {
+  objects.ships = []
+  objects.bullets = []
+  objects.powerups = []
+  objects.planets = []
+  draw.reset()
+  controls.reset()
+}
+
+const wasKilled = () => {
+  if (state.mouseLocked) {
+    document.exitPointerLock()
+  }
+  no_data = 0
+  state.dead = self.dead = true
+  state.token = null
+  ui.wasKilled()
+  ui.showDialog()
+  draw.checkSize()
 }
 
 const leaveGame = () => {
@@ -319,23 +354,9 @@ const leaveGame = () => {
     clearInterval(pinger)
     pinger = null
   }
-  if (ws !== null) {
-    ws.close()
-  }
-  if (state.mouseLocked) {
-    document.exitPointerLock()
-  }
-  state.token = null
   state.dead = self.dead = true
-  ws = null
-  inGame = false
+  state.ingame = false
 
-  objects.ships = []
-  objects.bullets = []
-  objects.powerups = []
-
-  draw.reset()
-  controls.reset()
   ui.updateOnlineStatus('offline')
   ui.showDialog()
   draw.checkSize()
@@ -343,7 +364,7 @@ const leaveGame = () => {
 }
 
 const serverTick = () => {
-  if (!ws || !self) {
+  if (!ws || !self || self.dead) {
     self.velX *= 0.95
     self.velY *= 0.95
     return
@@ -359,7 +380,7 @@ const serverTick = () => {
     resendCtrl = false
   }
   
-  tick.serverTick(rubber)
+  tick.serverTick(physics.TICK_DELTA, rubber)
   ui.updateColors(self.health, performance.now())
 }
 setInterval(serverTick, physics.MS_PER_TICK)
@@ -368,8 +389,8 @@ let turnLeftRamp = 0
 let turnRightRamp = 0
 
 const partialTick = (delta) => {
-  ticksPerFrame = 1.0 * delta / physics.MS_PER_TICK
-  const deltaSeconds = delta / 1000
+  if (self.dead) return
+  ticksPerFrame = 1000 * delta / physics.MS_PER_TICK
 
   if (!self.latched) {
     // turning
@@ -396,20 +417,24 @@ const partialTick = (delta) => {
   }
   
   // interpolate
-  self.posX += deltaSeconds * self.velX
-  self.posY += deltaSeconds * self.velY
+  self.posX += delta * self.velX
+  self.posY += delta * self.velY
 
   for (const ship of objects.ships) {
-    ship.posX += deltaSeconds * ship.velX
-    ship.posY += deltaSeconds * ship.velY
+    ship.posX += delta * ship.velX
+    ship.posY += delta * ship.velY
   }
   for (const bullet of objects.bullets) {
-    if (bullet.type == 'bullet' || bullet.type == 'laser') {
-      bullet.posX += deltaSeconds * bullet.velX
-      bullet.posY += deltaSeconds * bullet.velY
-      bullet.dist += deltaSeconds * bullet.velocity
-    } else if (bullet.type == 'mine') {
-      bullet.dist += deltaSeconds / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
+    switch (bullet.type) {
+    case 'bullet':
+    case 'laser':
+    case 'knockout':
+      bullet.posX += delta * bullet.velX
+      bullet.posY += delta * bullet.velY
+      bullet.dist += delta * bullet.velocity
+      break
+    case 'mine':
+      bullet.dist += delta / (physics.TICKS_PER_SECOND * physics.MINE_LIFETIME)
     }
   }
   objects.bullets = objects.bullets.filter(b => b.dist <= physics.MAX_BULLET_DISTANCE)
@@ -467,7 +492,7 @@ const frame = time => {
   let delta = 0
   if (lastPartialTick != null) {
     delta = time - lastPartialTick
-    partialTick(delta)
+    partialTick(delta / 1000)
     ui.updateOpacity(delta)
   }
   lastPartialTick = time
@@ -478,7 +503,10 @@ const frame = time => {
 window.requestAnimationFrame(frame)
 
 ui = require('./ui')({ joinGame, tryLockMouse, nextZoom })
+reset()
+ui.showDialog(true)
 leaveGame()
 updateZoomText()
-ui.hideLose()
+ui.endOfBuffer()
+ui.reset()
 tryReadCookies()

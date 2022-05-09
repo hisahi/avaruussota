@@ -86,6 +86,8 @@ const shipSystemFactory = handler => {
     ship.velY = 0
     ship.posX = x
     ship.posY = y
+    ship.posXnew = x
+    ship.posYnew = y
     ship.orient = -angle
     ship.latched = ship.accel === null
     handler.onShipLatch(ship)
@@ -199,7 +201,7 @@ const shipSystemFactory = handler => {
     }
 
     if (ship.fireWaitTicks <= 0) {
-      handler.addProjectile(ship, 'bullet')
+      handler.addProjectile(ship, 'bullet', { speedFactor: ship.latched ? 1.25 : 1 })
       ship.fireWaitTicks = ship.firingInterval
       return true
     }
@@ -316,10 +318,10 @@ const shipSystemFactory = handler => {
             [ship2.posX, ship2.posY],
             [ship2.posXnew, ship2.posYnew])
           if (0 <= t && t <= 1) {
-            ship1.posX = ship1.posX + t * delta * ship1.velX
-            ship1.posY = ship1.posY + t * delta * ship1.velY
-            ship2.posX = ship2.posX + t * delta * ship2.velX
-            ship2.posY = ship2.posY + t * delta * ship2.velY
+            ship1.posX = geom.lerp1D(ship1.posX, t, ship1.posXnew)
+            ship1.posY = geom.lerp1D(ship1.posY, t, ship1.posYnew)
+            ship2.posX = geom.lerp1D(ship2.posX, t, ship2.posXnew)
+            ship2.posY = geom.lerp1D(ship2.posY, t, ship2.posYnew)
             testShipShipCollision(ship1, ship2)
           }
         }
@@ -358,10 +360,10 @@ const shipSystemFactory = handler => {
   const handleShipShipCollision = (ship1, ship2) => {
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
-    const damage = 0.2 * Math.sqrt(Math.hypot(dx, dy))
+    const damage = 5 * Math.hypot(dx, dy) ** 0.25
       / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4)
-    const dmg1 = damage * (physics.hasRubbership(ship1) ? 0.5 : 1)
-    const dmg2 = damage * (physics.hasRubbership(ship2) ? 0.5 : 1)
+    const dmg1 = damage * (physics.hasRubbership(ship1) ? 0 : 1)
+    const dmg2 = damage * (physics.hasRubbership(ship2) ? 0 : 1)
 
     if (dmg1 >= 0.1) {
       ship1.health -= dmg1 * ship1.healthMul
@@ -456,7 +458,7 @@ const shipSystemFactory = handler => {
     }
   
     dist = Math.hypot(planet.x - ship.posX, planet.y - ship.posY)
-    if (planet.radius - dist > 0.25)
+    if (dist < planet.radius - 0.05)
       latchToPlanet(ship, planet)
 
     /*if (!physics.hasRubbership(ship) && damage < 0.4 && col_mul < 1.7) {

@@ -14,18 +14,21 @@
   <body>
     <canvas id="screen"></canvas>
     <div id="stats">
-      <div id="healthbar">
-        <div id="healthbarhealth"> </div>
-      </div>
       <p id="playerCount"><span id="playerCountNum"></span> playing</p>
+      <p id="leaderboardtitle"></p>
       <table id="leaderboard">
         <tbody>
         </tbody>
       </table> 
-      <pre id="powerupstatus"></pre>
       <div id="deathlog"></div>
       <p id="onlinestatus">offline</p>
       <p id="debuginfo">debug</p>
+    </div>
+    <div id="gamestats">
+      <div id="healthbar">
+        <div id="healthbarhealth"> </div>
+      </div>
+      <pre id="powerupstatus"></pre>
       <p id="yourscore"></p>
       <p id="scoreanimation"></p>
       <p id="powerupanimation">A POWER-UP HAS SPAWNED</p>
@@ -79,7 +82,7 @@
         <button type="button" id="btnzoom">zoom: 150%</button>
         <br />
         <br />
-        <i><a href="https://github.com/hisahi/avaruussota">v2.0.0 alpha</a></i>
+        <i><a href="https://github.com/hisahi/avaruussota">v2.0.0 alpha 2</a></i>
       </div>
     </div>
     <div id="gamehelp">
@@ -237,13 +240,15 @@
         <li><i>reheal</i>: instantly refills the ship's shields.</li>
         <li><i>spread</i>: shoots a low-range barrage of bullets that can cause
         devastating damage point-blank.</li>
-        <li><i>orion</i>:  boosts the ship to maximum velocity and shoots a volley of
+        <li><i>orion</i>: boosts the ship to maximum velocity and shoots a volley of
         low-range low-damage bullets to behind the ship.</li>
+        <li><i>knockout</i>: shoots a low-range short projectile that, if it
+        hits a ship, knocks it around violently.</li>
         </ul>
         <li>temporary:</li>
         <ul>
         <li><i>rubber ship</i>: the ship will not receive any damage from hitting
-        planets, and damage from hitting other ships is halved. lasts for 30 seconds.</li>
+        planets or other ships. lasts for 30 seconds.</li>
         <li><i>regen</i>: the shields are slowly refilled. lasts for 10 seconds.</li>
         <li><i>overdrive</i>: the acceleration and the rate of fire of the ship are
         greatly increased. lasts for 10 seconds.</li>

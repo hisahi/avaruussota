@@ -13,24 +13,32 @@ module.exports = (callbacks) => {
     document.getElementById('btnzoom').textContent = `zoom: ${(zoom * 100) | 0}%`
   }
 
-  const showDialog = () => {
-    dialogOpacity = 0
-    document.getElementById('dialogbox').style.opacity = '0'
-    document.getElementById('dialog').style.display = 'flex'
-    document.getElementById('stats').style.display = 'none'
-    document.getElementById('finalscore').style.display = 'block'
-    document.body.style.position = 'absolute'
-    document.body.style.overflow = ''
+  const showDialog = (always) => {
+    if (always || document.getElementById('dialog').style.display === 'none') {
+      dialogOpacity = 0
+      document.getElementById('dialogbox').style.opacity = '0'
+      document.getElementById('dialog').style.display = 'flex'
+      document.getElementById('gamestats').style.display = 'none'
+      document.getElementById('finalscore').style.display = 'block'
+      document.body.style.position = 'absolute'
+      document.body.style.overflow = ''
+    }
+  }
+
+  const wasKilled = () => {
+    document.getElementById('leaderboardtitle').textContent = 'leaderboard when you died'
   }
 
   const hideDialog = () => {
     document.getElementById('dialog').style.display = 'none'
-    document.getElementById('stats').style.display = 'block'
+    document.getElementById('gamestats').style.display = 'block'
+    document.getElementById('playerCount').style.display = 'block'
+    document.getElementById('leaderboardtitle').textContent = 'live leaderboard'
     document.body.style.position = 'relative'
     document.body.style.overflow = 'hidden'
   }
 
-  const hideLose = () => {
+  const reset = () => {
     document.getElementById('defeat').style.display = 'none'
     document.getElementById('defeatcrash').style.display = 'none'
     document.getElementById('defeatplanet').style.display = 'none'
@@ -39,8 +47,13 @@ module.exports = (callbacks) => {
     document.getElementById('finalscore').style.display = 'none'
   }
 
+  const endOfBuffer = () => {
+    document.getElementById('playerCount').style.display = 'none'
+  }
+
   const disconnect = () => {
-    hideLose()
+    endOfBuffer()
+    reset()
     document.getElementById('disconnected').style.display = 'inline'
   }
 
@@ -116,7 +129,7 @@ module.exports = (callbacks) => {
     document.getElementById('onlinestatus').textContent = text
   }
 
-  const updateDebugInfo = (text) => {
+  const debug = (text) => {
     if (!DEBUG) return
     document.getElementById('debuginfo').textContent = text
   }
@@ -168,21 +181,21 @@ module.exports = (callbacks) => {
   }
 
   const defeatedByPlayer = (name) => {
-    hideLose()
+    reset()
     document.getElementById('defeat').style.display = 'inline'
     document.getElementById('defeatname').style.display = 'inline'
     document.getElementById('defeatname').innerHTML = name
   }
 
   const defeatedByCrash = (name) => {
-    hideLose()
+    reset()
     document.getElementById('defeatcrash').style.display = 'inline'
     document.getElementById('defeatname').style.display = 'inline'
     document.getElementById('defeatname').innerHTML = name
   }
 
   const defeatedByPlanet = () => {
-    hideLose()
+    reset()
     document.getElementById('defeatplanet').style.display = 'inline'
   }
 
@@ -230,13 +243,14 @@ module.exports = (callbacks) => {
     updatePowerup,
     showDialog,
     hideDialog,
-    hideLose,
+    wasKilled,
+    reset,
+    endOfBuffer,
     disconnect,
     updateControls,
     updateOpacity,
     updateLeaderboard,
     updateOnlineStatus,
-    updateDebugInfo,
     updateColors,
     updateScore,
     updatePlayerCount,
@@ -247,5 +261,6 @@ module.exports = (callbacks) => {
     defeatedByPlanet,
     joiningGame,
     addDeathLog,
+    debug,
   }
 }

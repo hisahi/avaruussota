@@ -80,7 +80,7 @@ const powerupSystemFactory = handler => {
   }
 
   const applyPowerup = (ship, powerup) => {
-    const ITEM_COUNT = 9
+    const ITEM_COUNT = 10
     const item = 0 | (ITEM_COUNT * Math.random())
     switch (item) {
     case 0:
@@ -120,6 +120,11 @@ const powerupSystemFactory = handler => {
     case 8:
       if (ship.item === null) {
         ship.item = 'spread'
+      }
+      break
+    case 9:
+      if (ship.item === null) {
+        ship.item = 'knockout'
       }
       break
     }

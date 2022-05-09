@@ -6,8 +6,6 @@ const shipSystemFactory = require('./game/ship').system
 const bulletSystemFactory = require('./game/bullet').system
 const powerupSystemFactory = require('./game/powerup').system
 
-const TICK_DELTA = 1 / physics.TICKS_PER_SECOND
-
 const gameFactory = (wss) => {
   let ships
   let bullets
@@ -59,7 +57,7 @@ const gameFactory = (wss) => {
 
   const updateLeaderboard = () => {
     const players = ships.getShips()
-      .filter(ship => ship.score > 0)
+      .filter(ship => ship.score > 0 && !ship.dead)
       .map(ship => [ship.name, ship.score])
     players.sort((a, b) => b[1] - a[1])
     leaderboard = players.slice(0, 10)
@@ -85,22 +83,27 @@ const gameFactory = (wss) => {
   const onShipKilled = (ship) => {
     announce(serial.e_killship(ship))
     bullets.removeMinesBy(ship)
-    updateLeaderboard()
   }
 
   const onShipKilledByCrash = (ship, into) => {
+    ship.dead = true
+    updateLeaderboard()
     serial.send(lastSocket[ship._id], serial.e_crashed(into.name))
-    announceExcept(ship._id, serial.e_deathc(ship.name, into.name))
+    announce(serial.e_deathc(ship.name, into.name))
   }
 
   const onShipKilledByPlanet = ship => {
+    ship.dead = true
+    updateLeaderboard()
     serial.send(lastSocket[ship._id], serial.e_hitpl())
-    announceExcept(ship._id, serial.e_deathp(ship.name))
+    announce(serial.e_deathp(ship.name))
   }
 
   const killShipByBullet = (ship, bullet) => {
+    ship.dead = true
+    updateLeaderboard()
     serial.send(lastSocket[ship._id], serial.e_killed(bullet.shooterName))
-    announceExcept(ship._id, serial.e_deathk(ship.name, bullet.shooterName))
+    announce(serial.e_deathk(ship.name, bullet.shooterName))
     ships.killShip(ship)
   }
 
@@ -159,16 +162,17 @@ const gameFactory = (wss) => {
   }
 
   const oneTick = () => {
+    const delta = physics.TICK_DELTA
     const radius = Math.min(rubberbandRadius, rubberbandRadiusGoal)
-    ships.shipAcceleration(TICK_DELTA, rubberbandRadius, rubberbandRadiusGoal)
+    ships.shipAcceleration(delta, rubberbandRadius, rubberbandRadiusGoal)
     powerups.maybeSpawnPowerup(ships, radius)
 
-    ships.premoveShips(TICK_DELTA)
-    bullets.moveBullets(TICK_DELTA, ships, powerups)
-    ships.moveShips(TICK_DELTA, powerups)
+    ships.premoveShips(delta)
+    bullets.moveBullets(delta, ships, powerups)
+    ships.moveShips(delta, powerups)
     powerups.updatePowerups(ships)
 
-    updateRubberband(TICK_DELTA)
+    updateRubberband(delta)
     announceNearby()
   }
 
@@ -217,6 +221,9 @@ const gameFactory = (wss) => {
     
     if (accel && ship.accel === null) {
       ship.accel = now
+      if (ship.latched) {
+        ship.thrustBoost = 5 // quicker launch off a planet
+      }
       ship.latched = false
     } else if (!accel && ship.accel !== null) {
       ship.accel = null
@@ -277,7 +284,7 @@ const gameFactory = (wss) => {
     switch (ship.item) {
     case 'laser':
       ship.item = null
-      addProjectile(ship, 'laser', { speedFactor: 2.75, damageFactor: 4, noShear: true })
+      addProjectile(ship, 'laser', { speedFactor: 4, damageFactor: 4, noShear: true })
       break
     case 'reheal':
       ship.item = null
@@ -311,6 +318,10 @@ const gameFactory = (wss) => {
       for (let i = 0; i < 50; ++i) {
         physics.accel(ship, 1000)
       }
+      break
+    case 'knockout':
+      ship.item = null
+      addProjectile(ship, 'knockout', { rangeSub: 30, speedFactor: 0.75, damageFactor: 0.125, punch: 50 })
       break
     }
   }

@@ -114,10 +114,11 @@ The power-ups are:
 https://en.wikipedia.org/wiki/Project_Orion_(nuclear_propulsion))*: 
     boosts the ship to maximum velocity and shoots a volley of low-range
     low-damage bullets to behind the ship.
+  * *knockout*: shoots a low-range short projectile that, if it hits
+    a ship, knocks it around violently.
 * temporary:
   * *rubber ship*: the ship will not receive any damage from hitting
-    planets, and damage from hitting other ships is halved. lasts for
-    30 seconds.
+    planets or other ships. lasts for 30 seconds.
   * *regen*: the shields are slowly refilled. lasts for 10 seconds.
   * *overdrive*: the acceleration and the rate of fire of the ship are
     greatly increased. lasts for 10 seconds.

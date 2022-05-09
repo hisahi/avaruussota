@@ -1,13 +1,14 @@
 const maths = require('../utils/maths')
 
 const SHIP_SCALE = 1.1
+const clamp = maths.clamp
 
 const lerp1D = (a, t, b) => a + t * (b - a)
 const unlerp1D = (a, v, b) => (v - a) / (b - a)
+const lerp2D = (a, t, b) => [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])]
 
-const lerp2D = (a, t, b) => {
-  return [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])]
-}
+const dot2D = (v1, v2) => v1[0] * v2[0] + v1[1] * v2[1]
+const dot2Dxy = (x1, y1, x2, y2) => x1 * y1 + x2 * y2
 
 const normalize = (x, y, m) => {
   const d = Math.hypot(x, y)
@@ -98,8 +99,71 @@ const lineIntersectsLine = (a1, a2, b1, b2) => {
 
 const lineIntersectsTriangle = (l1, l2, t1, t2, t3) => {
   return lineIntersectsLine(l1, l2, t1, t2)
-    || lineIntersectsLine(l1, l2, t2, t3)
-    || lineIntersectsLine(l1, l2, t3, t1)
+      || lineIntersectsLine(l1, l2, t2, t3)
+      || lineIntersectsLine(l1, l2, t3, t1)
+}
+
+/*
+const lerp1D = (a, t, b) => a + t * (b - a)
+const lerp2D = (a, t, b) => [lerp1D(a[0], t, b[0]), lerp1D(a[1], t, b[1])]
+const clamp = (a, x, b) => Math.max(a, Math.min(x, b))
+*/
+
+const lineClosestDistanceToLine = (a1, a2, b1, b2) => {
+  if (lineIntersectsLine(a1, a2, b1, b2))
+    return 0
+
+  const [rx, ry] = [b1[0] - a1[0], b1[1] - a1[1]]
+  const [ux, uy] = [a2[0] - a1[0], b1[1] - a1[1]]
+  const [vx, vy] = [b2[0] - b1[0], b2[1] - b1[1]]
+
+  const ru = rx * ux + ry * uy
+  const rv = rx * vx + ry * vy
+  const uu = ux * ux + uy * uy
+  const uv = ux * vx + uy * vy
+  const vv = vx * vx + vy * vy
+
+  const det = uu * vv - uv * uv
+  let s0, t0
+
+  if (det < 1e-8) {
+    s0 = clamp(0, ru / uu, 1)
+    t0 = 0
+  } else {
+    s0 = clamp(0, (ru * vv - rv * uv) / det, 1)
+    t0 = clamp(0, (ru * uv - rv * uu) / det, 1)
+  }
+
+  const s1 = clamp(0, (t0 * uv + ru) / uu, 1)
+  const t1 = clamp(0, (s0 * uv - rv) / vv, 1)
+  
+  const as = lerp2D(a1, s1, a2)
+  const bt = lerp2D(b1, t1, b2)
+
+  return Math.hypot(as[0] - bt[0], as[1] - bt[1])
+}
+
+const pointClosestDistanceToLine = (p1, l1, l2) => {
+  return 100
+}
+
+const pointClosestDistanceToTriangle = (p, t1, t2, t3) => {
+  return Math.min(pointClosestDistanceToLine(p, t1, t2),
+    pointClosestDistanceToLine(p, t2, t3),
+    pointClosestDistanceToLine(p, t3, t1))
+}
+
+const lineClosestDistanceToTriangle = (l1, l2, t1, t2, t3) => {
+  if (pointInTriangle(t1, t2, t3, l1)
+      || pointInTriangle(t1, t2, t3, l2)) {
+    return 0
+  }
+  if (l1[0] === l2[0] && l1[1] === l2[1]) {
+    return pointClosestDistanceToTriangle(l1, t1, t2, t3)
+  }
+  return Math.min(lineClosestDistanceToLine(l1, l2, t1, t2),
+    lineClosestDistanceToLine(l1, l2, t2, t3),
+    lineClosestDistanceToLine(l1, l2, t3, t1))
 }
 
 const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
@@ -173,9 +237,9 @@ const getShipPoints = (ship) => {
   const c = Math.cos(ship.orient)
 
   return [
-    rotatePointOffset(s, c,  0   *S, +2   *S, ship.posX, ship.posY),
+    rotatePointOffset(s, c,  0     , +2   *S, ship.posX, ship.posY),
     rotatePointOffset(s, c, +1.5 *S, -2   *S, ship.posX, ship.posY),
-    rotatePointOffset(s, c,  0   *S, -1.25*S, ship.posX, ship.posY),
+    rotatePointOffset(s, c,  0     , -1.25*S, ship.posX, ship.posY),
     rotatePointOffset(s, c, -1.5 *S, -2   *S, ship.posX, ship.posY)
   ]
 }
@@ -190,9 +254,9 @@ const getCollisionPoints = (ship) => {
   const c = Math.cos(ship.orient)
   
   return [
-    rotatePointOffset(s, c,  0   *S, +2.6*S, ship.posX, ship.posY),
-    rotatePointOffset(s, c, +1.87*S, -2.6*S, ship.posX, ship.posY),
-    rotatePointOffset(s, c, -1.87*S, -2.6*S, ship.posX, ship.posY)
+    rotatePointOffset(s, c,  0      , +2.5*S, ship.posX, ship.posY),
+    rotatePointOffset(s, c, +1.625*S, -2.5*S, ship.posX, ship.posY),
+    rotatePointOffset(s, c, -1.625*S, -2.5*S, ship.posX, ship.posY)
   ]
 }
 
@@ -218,6 +282,8 @@ module.exports = {
   lerp1D,
   lerp2D,
   unlerp1D,
+  dot2D,
+  dot2Dxy,
   normalize,
   pointInTriangle,
   rotatePoint,
@@ -227,6 +293,8 @@ module.exports = {
   lineClosestPointToPoint,
   closestSynchroDistance,
   lineIntersectsTriangle,
+  lineClosestDistanceToLine,
+  lineClosestDistanceToTriangle,
   wrapRadianAngle,
   withinBoundingSquare,
   getPlanetDamageMultiplier,

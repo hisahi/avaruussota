@@ -160,9 +160,20 @@ module.exports = (canvas, self, objects, state, cursor) => {
     if (bullet.type === 'bullet') {
       ctx.moveTo(x, y)
       ctx.arc(x, y, 0.3 * unitSize, 0, 2 * Math.PI)
+    } else if (bullet.type === 'knockout') {
+      const radius = 0.7 * unitSize
+      ctx.beginPath()
+      ctx.moveTo(x + radius, y)
+      for (let i = 0; i < 7; ++i) {
+        const angle = i * Math.PI * 6 / 7
+        ctx.lineTo(x + radius * Math.sin(angle), y + radius * Math.cos(angle))
+      }
+      ctx.lineTo(x + radius, y)
+      ctx.closePath()
+      ctx.stroke()
     } else if (bullet.type === 'laser') {
-      const x1 = cx + (self.posX - (bullet.posX + bullet.velX)) * unitSize
-      const y1 = cy + (self.posY - (bullet.posY + bullet.velY)) * unitSize
+      const x1 = cx + (self.posX - (bullet.posX + bullet.velX * 0.1)) * unitSize
+      const y1 = cy + (self.posY - (bullet.posY + bullet.velY * 0.1)) * unitSize
       ctx.moveTo(x, y)
       ctx.lineTo(x1, y1)
     } else if (bullet.type === 'mine') {
@@ -325,7 +336,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
     }
     ctx.stroke()
     
-    if (!self.dead) {
+    if (state.ingame) {
       // draw red mask
       if (rubber > 1) {
         const gradient = ctx.createRadialGradient(cx + self.posX * unitSize,
@@ -343,7 +354,9 @@ module.exports = (canvas, self, objects, state, cursor) => {
         ctx.fillStyle = gradient
         ctx.fill()
       }
+    }
 
+    if (!self.dead) {
       // draw player ship
       ctx.lineWidth = 1.5 * window.devicePixelRatio
       drawShip(self)
@@ -407,8 +420,8 @@ module.exports = (canvas, self, objects, state, cursor) => {
     for (const line of lines) {
       drawLine(line)
 
-      line.x += line.vx
-      line.y += line.vy
+      line.x += line.vx * delta
+      line.y += line.vy * delta
       line.angle += line.vangle
       line.vx *= 0.99
       line.vy *= 0.99
@@ -441,9 +454,11 @@ module.exports = (canvas, self, objects, state, cursor) => {
     }
     bubbles = bubbles.filter(bubble => bubble.alpha > 0)
 
-    if (!self.dead) {
+    if (state.ingame) {
       ctx.drawImage(fogCanvas, 0, 0)
+    }
 
+    if (!self.dead) {
       if (damageAlpha > 0) {
         ctx.beginPath()
         ctx.fillStyle = `rgba(128,0,0,${damageAlpha})`

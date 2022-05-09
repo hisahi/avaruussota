@@ -111,9 +111,11 @@ Lisäykset ovat:
 https://en.wikipedia.org/wiki/Project_Orion_(nuclear_propulsion))*: 
     kiihdyttää aluksen maksiminopeuteen ja ampuu lyhyen ja heikon
     luotisuman aluksen taakse.
+  * *knockout* (törmäys): ampuu hitaan ja lyhytkantoisen ammuksen, joka
+    osuessaan alukseen tönäisee tätä rajusti.
 * väliaikaiset:
-  * *rubber ship* (kumialus): planeettoihin törmäämisestä ei saa vahinkoa,
-    ja aluksiin törmäämisestä saa vähemmän vahinkoa. kestää 30 sekuntia.
+  * *rubber ship* (kumialus): planeettoihin tai aluksiintörmäämisestä ei
+    saa vahinkoa. kestää 30 sekuntia.
   * *regen* (elpyminen): suojat palautuvat hitaasti. kestää 10 sekuntia.
   * *overdrive* (ylinopeus): aluksen kiihtyvyys ja tulitusnopeus ovat
     huomattavasti nopeampia. kestää 10 sekuntia.

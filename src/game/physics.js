@@ -1,15 +1,16 @@
 const GRAV = 6.67e-11
 const TICKS_PER_SECOND = 25
+const TICK_DELTA = 1 / TICKS_PER_SECOND
 const MS_PER_TICK = 1000 / TICKS_PER_SECOND
-const MAX_SHIP_VELOCITY = 1280 / TICKS_PER_SECOND
-const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.5
+const MAX_SHIP_VELOCITY = 1128 / TICKS_PER_SECOND
+const ACTUAL_MAX_SHIP_VELOCITY = MAX_SHIP_VELOCITY * 2.25
 const ACCEL_BASE = 1.9375
 const ACCEL_FACTOR = 0.00055
 const MIN_SHIP_VELOCITY = 0.21
 const LATCH_VELOCITY = 7
 const BRAKE_MUL = (MIN_SHIP_VELOCITY / MAX_SHIP_VELOCITY) ** (1 / (TICKS_PER_SECOND * 1.5))
 const VIEW_DISTANCE = 55
-const MAX_BULLET_DISTANCE = 100
+const MAX_BULLET_DISTANCE = 125
 const RUBBERBAND_BUFFER = 80
 const RUBBERBAND_RADIUS_MUL = 80
 const MINE_LIFETIME = 120
@@ -109,7 +110,7 @@ const hasRegen = (ship) => {
 const accel = (ship, accelTimeMs) => {
   let accelMul = getAccelMul(accelTimeMs) * healthToVelocity(ship.health)
     * ship.thrustBoost
-    * (hasOverdrive(ship) ? 2 : 1) * (ship.highAgility ? 1.33 : 1)
+    * (hasOverdrive(ship) ? 2 : 1) * (ship.highAgility ? 1.2 : 1)
   if (ship.speedMul !== 1) {
     accelMul *= Math.sqrt(ship.speedMul)
   }
@@ -142,20 +143,25 @@ const gravityBullet = (bullet, planets) => {
     return
   }
 
+  let gx = 0
+  let gy = 0
+  let gravity = false
   for (const planet of planets) {
     const d = Math.hypot(bullet.posX - planet.x, bullet.posY - planet.y)
     if (d > (planet.radius + 1) && d < 10 + planet.radius * 4) {
       const dx = planet.x - bullet.posX
       const dy = planet.y - bullet.posY
-      const r2 = Math.hypot(dx, dy) ** 2
-      const f = GRAV * 1.5e+10 / r2 * planet.radius
-      bullet.velX += f * dx
-      bullet.velY += f * dy
+      const r2 = dx ** 2 + dy ** 2
+      const f = GRAV * 1.25e+11 / r2 * planet.radius
+      gravity = true
+      gx += f * dx
+      gy += f * dy
     }
   }
-  const d = Math.hypot(bullet.velX, bullet.velY)
-  bullet.velX *= bullet.velocity / d
-  bullet.velY *= bullet.velocity / d
+  if (gravity) {
+    bullet.velX += gx
+    bullet.velY += gy
+  }
 }
 
 const gravityShip = (ship, planets) => {
@@ -164,23 +170,23 @@ const gravityShip = (ship, planets) => {
   const dv = Math.hypot(ship.velX, ship.velY)
   for (const planet of planets) {
     const d = Math.hypot(ship.posX - planet.x, ship.posY - planet.y)
-    if (d > (planet.radius + 1.5 + dv * 0.3) && d < 10 + planet.radius * 4) {
+    if (d < 10 + planet.radius * 4) {
       const dx = planet.x - ship.posX
       const dy = planet.y - ship.posY
-      const r2 = Math.hypot(dx, dy) ** 2
-      const f = GRAV * 1e+9 * planet.radius / r2 / (
-        (ship.accel !== null || ship.brake !== null) ? 5 : 1)
+      const r2 = dx ** 2 + dy ** 2
+      const f = GRAV * 2.2e+10 * planet.radius / r2 / (
+        (ship.brake !== null) ? 3 : 1)
       ship.velX += f * dx
       ship.velY += f * dy
       if (ship.accel !== null) {
         const direction = geom.normalize(dx, dy)
-        thrust += 3 * (Math.min(1, dv / MAX_SHIP_VELOCITY) ** 0.5) *
-          (1000 * Math.max(0, f * (direction[0] * vector[0]
-                                 + direction[1] * vector[1]))) ** 1.5
+        thrust += 50 * (Math.min(1, dv / MAX_SHIP_VELOCITY) ** 0.5) *
+          Math.min(1, dv * 0.009) *
+          (Math.max(0, f * geom.dot2D(direction, vector)))
       }
     }
   }
-  ship.thrustBoost = Math.min(thrust, 3)
+  ship.thrustBoost = Math.min(thrust, 1.5)
   checkMaxVelocity(ship)
 }
 
@@ -215,6 +221,7 @@ module.exports = {
   TICKS_PER_SECOND,
   MAX_SHIP_VELOCITY,
   ACTUAL_MAX_SHIP_VELOCITY,
+  TICK_DELTA,
   MS_PER_TICK,
   LATCH_VELOCITY,
   VIEW_DISTANCE,
@@ -222,6 +229,7 @@ module.exports = {
   PLANET_CHUNK_SIZE,
   RUBBERBAND_BUFFER,
   MINE_LIFETIME,
+  checkMaxVelocity,
   hasOverdrive,
   hasRubbership,
   hasRegen,
