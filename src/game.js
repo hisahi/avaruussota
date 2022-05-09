@@ -23,14 +23,6 @@ const gameFactory = (wss) => {
     })
   }
 
-  const announceExcept = (shipId, obj) => {
-    const ignore = lastSocket[shipId]
-    wss.clients.forEach((ws) => {
-      if (ws !== ignore)
-        serial.send(ws, obj)
-    })
-  }
-
   const newPlayer = () => {
     const existing = ships.getShipCount()
     rubberbandRadiusGoal = physics.getRubberbandRadius(existing)

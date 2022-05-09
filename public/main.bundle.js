@@ -1505,7 +1505,7 @@ const bulletSystemFactory = handler => {
         case 'bullet':
         case 'knockout':
           physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
-        // fall-through
+        // fall through
 
         case 'laser':
           {
@@ -2639,6 +2639,7 @@ const shipSystemFactory = handler => {
         ++shooter.score;
       }
 
+      ship.dead = true;
       onDeath(ship, bullet);
     }
   };
@@ -2841,7 +2842,8 @@ const lineClosestDistanceToLine = (a1, a2, b1, b2) => {
 };
 
 const pointClosestDistanceToLine = (p1, l1, l2) => {
-  return 100;
+  const p2 = lineClosestPointToPoint(l1[0], l1[1], l2[0], l2[1], p1[0], p1[1]);
+  return Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
 };
 
 const pointClosestDistanceToTriangle = (p, t1, t2, t3) => {
@@ -2872,18 +2874,18 @@ const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
   return Number.NaN;
 };
 
-const lineClosestPointToPoint = (a1, a2, b1, b2, p1, p2) => {
-  const v1 = b1 - a1;
-  const v2 = b2 - a2;
-  const u1 = a1 - p1;
-  const u2 = a2 - p2;
+const lineClosestPointToPoint = (ax, ay, bx, by, px, py) => {
+  const v1 = bx - ax;
+  const v2 = by - ay;
+  const u1 = ax - px;
+  const u2 = ay - py;
   const vu = v1 * u1 + v2 * u2;
   const vv = v1 * v1 + v2 * v2;
-  if (vv === 0) return [a1, a2];
+  if (vv === 0) return [ax, ay];
   let t = -vu / vv;
   if (t < 0) t = 0;
   if (t > 1) t = 1;
-  return lerp2D([a1, a2], t, [b1, b2]);
+  return lerp2D([ax, ay], t, [bx, by]);
 };
 
 const closestSynchroDistance = (a1, a2, b1, b2) => {
@@ -5960,6 +5962,10 @@ let pinger = null;
 let seed = 0;
 let zoom = 1;
 let lastPartialTick = null;
+const PING_SMOOTHING = 5;
+let gotPing = false;
+let pingIndex = 0;
+let smoothedPings = Array(PING_SMOOTHING);
 let resendCtrl = false;
 
 const draw = __webpack_require__(/*! ./draw */ "./js/draw.js")(canvas, self, objects, state, cursor);
@@ -6000,6 +6006,48 @@ const nextZoom = () => {
     sameSite: 'strict'
   });
   setZoom(ZOOM_LEVELS[indx]);
+};
+
+const resetPing = () => {
+  pingIndex = 0;
+  gotPing = false;
+};
+
+const pingReport = ping => {
+  ping = Math.max(ping, 0);
+
+  if (!gotPing) {
+    gotPing = true;
+    smoothedPings.fill(ping);
+  } else {
+    smoothedPings[pingIndex++] = ping;
+    pingIndex %= PING_SMOOTHING;
+  }
+};
+
+const getSmoothedPing = () => {
+  if (!gotPing) return 0;
+  let aggregate = 0;
+  let weightSum = 0;
+  const p2 = (pingIndex + PING_SMOOTHING - 2) % PING_SMOOTHING;
+  const p1 = (pingIndex + PING_SMOOTHING - 1) % PING_SMOOTHING;
+
+  for (let i = 0; i < PING_SMOOTHING; ++i) {
+    let weight;
+
+    if (i === p1) {
+      weight = 4;
+    } else if (i === p2) {
+      weight = 2;
+    } else {
+      weight = 1;
+    }
+
+    aggregate += smoothedPings[i] * weight;
+    weightSum += weight;
+  }
+
+  return aggregate / weightSum;
 };
 
 const onConnect = () => {
@@ -6158,6 +6206,7 @@ const joinGame = () => {
   state.token = null;
   ui.joiningGame();
   ui.hideDialog();
+  resetPing();
   connectTimer = setTimeout(() => disconnect(), 5000);
   let wsproto = here.protocol.replace('http', 'ws');
   let port = here.port;
@@ -6181,7 +6230,8 @@ const joinGame = () => {
         break;
 
       case serial.C_pong:
-        ui.updateOnlineStatus(`${self.dead ? 'game over' : 'in game'}, ping: ${Math.max(performance.now() - obj.time, 0).toFixed(1)}ms`);
+        pingReport(performance.now() - obj.time);
+        ui.updateOnlineStatus(`${self.dead ? 'game over' : 'in game'}, ping: ${getSmoothedPing().toFixed(1)}ms`);
         break;
 
       case serial.C_data:

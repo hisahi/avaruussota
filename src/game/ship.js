@@ -482,6 +482,7 @@ const shipSystemFactory = handler => {
       if (shooter) {
         ++shooter.score
       }
+      ship.dead = true
       onDeath(ship, bullet)
     }
   }

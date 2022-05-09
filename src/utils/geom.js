@@ -144,7 +144,8 @@ const lineClosestDistanceToLine = (a1, a2, b1, b2) => {
 }
 
 const pointClosestDistanceToLine = (p1, l1, l2) => {
-  return 100
+  const p2 = lineClosestPointToPoint(l1[0], l1[1], l2[0], l2[1], p1[0], p1[1])
+  return Math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 }
 
 const pointClosestDistanceToTriangle = (p, t1, t2, t3) => {
@@ -176,18 +177,18 @@ const lineIntersectCircleFirstDepth = (a1, a2, x, y, radius) => {
   return Number.NaN
 }
 
-const lineClosestPointToPoint = (a1, a2, b1, b2, p1, p2) => {
-  const v1 = b1 - a1
-  const v2 = b2 - a2
-  const u1 = a1 - p1
-  const u2 = a2 - p2
+const lineClosestPointToPoint = (ax, ay, bx, by, px, py) => {
+  const v1 = bx - ax
+  const v2 = by - ay
+  const u1 = ax - px
+  const u2 = ay - py
   const vu = v1 * u1 + v2 * u2
   const vv = v1 * v1 + v2 * v2
-  if (vv === 0) return [a1, a2]
+  if (vv === 0) return [ax, ay]
   let t = -vu / vv
   if (t < 0) t = 0
   if (t > 1) t = 1
-  return lerp2D([a1, a2], t, [b1, b2])
+  return lerp2D([ax, ay], t, [bx, by])
 }
 
 const closestSynchroDistance = (a1, a2, b1, b2) => {

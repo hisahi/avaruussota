@@ -120,7 +120,7 @@ const bulletSystemFactory = handler => {
       case 'bullet':
       case 'knockout':
         physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
-        // fall-through
+        // fall through
       case 'laser':
       {
         const newX = bullet.posX + delta * bullet.velX
