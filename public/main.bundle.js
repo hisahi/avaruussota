@@ -6075,7 +6075,7 @@ const onConnect = () => {
   ui.updateControls(state);
   joystick.resetJoystickCenter();
   pinger = setInterval(() => {
-    if (++no_data > 10 || ws == null) {
+    if (++no_data > 10 || ws === null) {
       disconnect();
       return;
     }
@@ -6085,6 +6085,12 @@ const onConnect = () => {
 };
 
 const disconnect = () => {
+  if (ws) {
+    ws.dead = true;
+    if (ws) ws.close();
+    ws = null;
+  }
+
   if (self.dead) {
     reset();
     ui.endOfBuffer();
@@ -6199,7 +6205,10 @@ const gotData = obj => {
 
 const joinGame = () => {
   if (state.ingame && ws !== null) {
-    ws.close();
+    state.token = null;
+    ws.dead = true;
+    if (ws) ws.close();
+    ws = null;
   }
 
   reset();
@@ -6219,6 +6228,8 @@ const joinGame = () => {
   ws.binaryType = 'arraybuffer';
   state.ingame = true;
   ws.addEventListener('message', e => {
+    const socket = e.target;
+    if (socket.dead) return;
     let data = serial.recv(e.data);
     if (data instanceof ArrayBuffer) data = new Uint8Array(data);
     const [cmd, obj] = serial.decode(data);
@@ -6333,7 +6344,11 @@ const joinGame = () => {
   ws.addEventListener('open', () => {
     onConnect();
   });
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', e => {
+    const socket = e.target;
+    if (socket.dead) return;
+    if (socket !== ws) return;
+
     if (state.ingame) {
       disconnect();
     }
