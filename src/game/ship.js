@@ -46,26 +46,30 @@ const newShip = () => ({
   _id: shipCounter.next()
 })
 
-const shipFields = [
-  '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health',
-  'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks',
-  'thrustBoost',
+const FIELDS = [
+  '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name',
+  'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks', 'thrustBoost',
   'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul',
   'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'
 ]
 
-const shipSystemFactory = handler => {
-  let ships = {}
+const FIELDS_SHORT = [
+  '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health',
+  'name', 'score', 'accel', 'brake'
+]
 
-  const getShips = () => Object.values(ships)
-  const getShipById = id => ships[id]
-  const getShipCount = () => Object.keys(ships).length
-  const removeShipById = id => delete ships[id]
+const shipSystemFactory = handler => {
+  let ships = new Map()
+
+  const iterateShips = () => ships.values()
+  const getShips = () => [...iterateShips()]
+  const getShipById = id => ships.get(id)
+  const getShipCount = () => ships.size
 
   const newPlayerShip = (radius, bullets) => {
     const ship = newShip()
     spawn(ship, radius, bullets)
-    ships[ship._id] = ship
+    ships.set(ship._id, ship)
     return ship
   }
 
@@ -112,29 +116,25 @@ const shipSystemFactory = handler => {
   }
 
   const spawn = (ship, radius, bullets) => {
-    const playerKeys = Object.keys(ships)
-    const playerCount = playerKeys.length
+    const players = getShips()
+    const playerCount = players.length
     let baseX = 0
     let baseY = 0
     if (playerCount < 1) {
       return spawnLone(ship, radius)
     }
 
-    let tries = 64
+    let tries = 128
     
     while (--tries > 0) {
-      const randShip = ships[playerKeys[(playerCount * Math.random()) | 0]]
+      const randShip = players[(playerCount * Math.random()) | 0]
       baseX = randShip.posX
       baseY = randShip.posY
       baseX += physics.VIEW_DISTANCE * maths.randomSign()
       baseY += physics.VIEW_DISTANCE * maths.randomSign()
-      if (Math.hypot(baseX, baseY) < radius - physics.PLANET_CHUNK_SIZE / 8) {
-        break
-      }
-      if (tries < 8) {
-        if (Math.hypot(baseX, baseY) < radius) {
-          break
-        }
+      if (Math.hypot(baseX, baseY) >=
+            radius - (tries < 8 ? 0 : physics.PLANET_CHUNK_SIZE / 8)) {
+        continue
       }
     }
 
@@ -144,7 +144,7 @@ const shipSystemFactory = handler => {
     if (planets.length < 1) {
       ship.posX = baseX + physics.VIEW_DISTANCE * maths.randomSign()
       ship.posY = baseY + physics.VIEW_DISTANCE * maths.randomSign()
-      ship.orient = 0
+      ship.orient = 2 * Math.PI * Math.random()
       return
     }
     
@@ -210,9 +210,7 @@ const shipSystemFactory = handler => {
 
   const shipAcceleration = (delta, radius, radiusGoal) => {
     const now = chron.timeMs()
-    const shipList = getShips()
-    for (let i = 0, shipCount = shipList.length; i < shipCount; ++i) {
-      const ship = shipList[i]
+    for (const ship of ships.values()) {
       let doAccel = false
       let doBrake = false
   
@@ -270,26 +268,18 @@ const shipSystemFactory = handler => {
   }
 
   const premoveShips = (delta) => {
-    const shipList = getShips()
-    const shipCount = shipList.length
-
-    for (let i = 0; i < shipCount; ++i) {
-      const ship1 = shipList[i]
-      ship1.posXnew = ship1.posX + delta * ship1.velX
-      ship1.posYnew = ship1.posY + delta * ship1.velY
+    for (const ship of ships.values()) {
+      ship.posXnew = ship.posX + delta * ship.velX
+      ship.posYnew = ship.posY + delta * ship.velY
     }
   }
 
   const moveShips = (delta, powerups) => {
-    const shipList = getShips()
     const powerupList = powerups.getPowerups()
-    const shipCount = shipList.length
     const powerupCount = powerupList.length
     const dist = physics.ACTUAL_MAX_SHIP_VELOCITY + 1
 
-    for (let i = 0; i < shipCount; ++i) {
-      const ship1 = shipList[i]
-
+    for (const ship1 of ships.values()) {
       for (let j = 0; j < powerupCount; ++j) {
         const pup = powerupList[j]
         if (Math.abs(ship1.posX - pup.posX) < 3
@@ -304,9 +294,8 @@ const shipSystemFactory = handler => {
         }
       }
 
-      for (let j = 0; j < shipCount; ++j) {
-        const ship2 = shipList[j]
-        if (i == j || ship1.dead || ship2.dead) {
+      for (const ship2 of ships.values()) {
+        if (ship1 === ship2 || ship1.dead || ship2.dead) {
           continue
         }
 
@@ -350,27 +339,36 @@ const shipSystemFactory = handler => {
       }
     }
 
-    for (let i = 0; i < shipCount; ++i) {
-      const ship = shipList[i]
+    for (const ship of ships.values()) {
       ship.posX = ship.posXnew
       ship.posY = ship.posYnew
     }
   }
 
   const handleShipShipCollision = (ship1, ship2) => {
+    const now = chron.timeMs()
     const dx = ship1.velX - ship2.velX
     const dy = ship1.velY - ship2.velY
-    const damage = 5 * Math.hypot(dx, dy) ** 0.25
-      / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4)
+    const damage = 5 * (Math.hypot(dx, dy) ** 0.25)
+      / physics.ACTUAL_MAX_SHIP_VELOCITY
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0 : 1)
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0 : 1)
 
     if (dmg1 >= 0.1) {
       ship1.health -= dmg1 * ship1.healthMul
+      ship1.lastDamageAt = now
+      ship1.lastDamageBy = ship2._id
     }
 
     if (dmg2 >= 0.1) {
       ship2.health -= dmg2 * ship2.healthMul
+      ship2.lastDamageAt = now
+      ship2.lastDamageBy = ship1._id  
+    }
+
+    if (physics.hasRubbership(ship1) && physics.hasRubbership(ship2)) {
+      ship1.accel = null
+      ship2.accel = null
     }
 
     // elastic collision
@@ -468,7 +466,7 @@ const shipSystemFactory = handler => {
 
   const deleteShip = (ship) => {
     ship.dead = true
-    removeShipById(ship._id)
+    ships.delete(ship._id)
   }
 
   const damageShip = (ship, damage, bullet, shooter, onDeath) => {
@@ -494,10 +492,10 @@ const shipSystemFactory = handler => {
 
   return {
     getShips,
+    iterateShips,
     getShipById,
     getShipCount,
     damageShip,
-    removeShipById,
     newPlayerShip,
     premoveShips,
     moveShips,
@@ -509,5 +507,6 @@ const shipSystemFactory = handler => {
 
 module.exports = {
   system: shipSystemFactory,
-  fields: shipFields,
+  FIELDS,
+  FIELDS_SHORT,
 }

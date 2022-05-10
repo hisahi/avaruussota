@@ -1,8 +1,10 @@
+const chron = require('../utils/chron')
 const geom = require('../utils/geom')
 const maths = require('../utils/maths')
 const physics = require('./physics')
 const Counter = require('../utils/counter')
 const bulletCounter = new Counter()
+const { filterInplace } = require('../utils/filter')
 
 const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 2.4
 const BULLET_DAMAGE_MULTIPLIER = 0.115
@@ -25,26 +27,28 @@ const newBullet = () => ({
   _id: bulletCounter.next()
 })
 
-const bulletFields = [
-  '_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'dist', 'velocity',
+const FIELDS = [
+  '_id', 'posX', 'posY', 'velX', 'velY', 'dist', 'dead', 'velocity',
   'shooter', 'shooterName', 'isHit', 'canPickUp', 'type', 'damage'
+]
+
+const FIELDS_SHORT = [
+  '_id', 'posX', 'posY', 'velX', 'velY', 'dist'
 ]
 
 const bulletTypeRadius = {
   bullet: 0.3,
+  laser: 0.01,
   knockout: 0.7,
 }
 
 const bulletSystemFactory = handler => {
-  let bullets = {}
+  let bullets = []
 
-  const getBullets = () => Object.values(bullets)
-
-  const getBulletsById = (ids) => ids.map(id => bullets[id])
+  const getBullets = () => bullets
 
   const removeBullet = (bullet) => {
     bullet.dead = true
-    delete bullets[bullet._id]
     handler.onBulletDeleted(bullet)
   }
 
@@ -68,6 +72,10 @@ const bulletSystemFactory = handler => {
         [hitX, hitY] = geom.normalize(hitX, hitY, 25 * bullet.punch)
         ship.velX += hitX
         ship.velY += hitY
+      }
+      if (shooter) {
+        ship.lastDamageAt = chron.timeMs()
+        ship.lastDamageBy = bullet.shooter
       }
       physics.checkMaxVelocity(ship)
     }
@@ -102,10 +110,8 @@ const bulletSystemFactory = handler => {
   }
 
   const moveBullets = (delta, ships, powerups) => {
-    const shipList = ships.getShips()
     const powerupList = powerups.getPowerups()
     const bulletList = getBullets()
-    const shipCount = shipList.length
     const powerupCount = powerupList.length
     const bulletCount = bulletList.length
 
@@ -115,6 +121,7 @@ const bulletSystemFactory = handler => {
         removeBullet(bullet)
         continue
       }
+      if (bullet.dead) continue
 
       switch (bullet.type) {
       case 'bullet':
@@ -125,10 +132,10 @@ const bulletSystemFactory = handler => {
       {
         const newX = bullet.posX + delta * bullet.velX
         const newY = bullet.posY + delta * bullet.velY
+        const isLaser = bullet.type === 'laser'
 
         let collisionShip = null
-        for (let j = 0; j < shipCount; ++j) {
-          const ship = shipList[j]
+        for (const ship of ships.iterateShips()) {
           if (ship._id !== bullet.shooter
             && Math.abs(ship.posX - bullet.posX) < 2 * delta * Math.abs(bullet.velX) + bullet.radius
             && Math.abs(ship.posY - bullet.posY) < 2 * delta * Math.abs(bullet.velY) + bullet.radius) {
@@ -137,7 +144,7 @@ const bulletSystemFactory = handler => {
               [ship.posXnew, ship.posYnew],
               [bullet.posX, bullet.posY],
               [newX, newY])
-            if (-2 <= t && t <= 3) {
+            if ((isLaser ? 0 : -2) <= t && t <= (isLaser ? 1 : 3)) {
               [ship.posX, ship.posY] = geom.lerp2D([ship.posX, ship.posY],
                 maths.clamp(0, t, 1), [ship.posXnew, ship.posYnew])
               const [p1, p2, p3] = geom.getCollisionPoints(ship)
@@ -207,8 +214,7 @@ const bulletSystemFactory = handler => {
         const r = 3 + 7 * Math.random() ** 3
         let primerShip = null
         
-        for (let j = 0; j < shipCount; ++j) {
-          const ship = shipList[j]
+        for (const ship of ships.iterateShips()) {
           if (!ship.dead && bullet.shooter !== ship._id &&
               Math.hypot(ship.posX - bullet.posX,
                 ship.posY - bullet.posY) < r) {
@@ -219,11 +225,11 @@ const bulletSystemFactory = handler => {
 
         if (primerShip || bullet.isHit) {
           // blow up the mine
-          shipList.forEach(ship => {
-            if (bullet.shooter === ship._id) return
+          for (const ship of ships.iterateShips()) {
+            if (bullet.shooter === ship._id) continue
             if (Math.abs(ship.posX - bullet.posX) > 15 ||
               Math.abs(ship.posY - bullet.posY) > 15) {
-              return
+              continue
             }
 
             let damage = 2 / Math.sqrt(Math.hypot(
@@ -235,7 +241,7 @@ const bulletSystemFactory = handler => {
 
             const shooter = ships.getShipById(bullet.shooter)
             ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet)
-          })
+          }
 
           handler.onMineExplode(bullet)
           removeBullet(bullet)
@@ -247,6 +253,8 @@ const bulletSystemFactory = handler => {
       }
       }
     }
+
+    filterInplace(bullets, bullet => !bullet.dead)
   }
 
   const addProjectile = (ship, type, extras) => {
@@ -294,13 +302,12 @@ const bulletSystemFactory = handler => {
       punch: punch
     }
     //[bullet.velX, bullet.velY] = geom.normalize(bullet.velX, bullet.velY, bullet.velocity)
-    bullets[bullet._id] = bullet
+    bullets.push(bullet)
     return bullet
   }
 
   return {
     getBullets,
-    getBulletsById,
     moveBullets,
     addProjectile,
     removeBullet,
@@ -310,5 +317,6 @@ const bulletSystemFactory = handler => {
 
 module.exports = {
   system: bulletSystemFactory,
-  fields: bulletFields,
+  FIELDS,
+  FIELDS_SHORT,
 }

@@ -2,30 +2,30 @@ const chron = require('../utils/chron')
 const physics = require('./physics')
 const Counter = require('../utils/counter')
 const powerupCounter = new Counter()
+const { filterInplace } = require('../utils/filter')
 
 const newPowerup = () => ({
   posX: 0, posY: 0,           // position X, Y
   despawn: chron.timeMs() + 15000,
   pickupRadius: 3.5,
-  pickupDist: 100,
+  pickupDist: Infinity,
   pickupPlayer: null,
   
   dead: false,
   _id: powerupCounter.next()
 })
 
-const powerupFields = [
-  '_id', 'dead', 'posX', 'posY', 'despawn',
-  'pickupRadius', 'pickupDist', 'pickupPlayer'
+const FIELDS = [
+  '_id', 'dead', 'posX', 'posY', 'despawn'
 ]
 
 const powerupSystemFactory = handler => {
-  let powerups = {}
+  let powerups = []
   let nextPowerup = null
 
-  const getPowerups = () => Object.values(powerups)
+  const getPowerups = () => powerups
 
-  const clear = () => powerups = {}
+  const clear = () => powerups.length = 0
 
   const trySpawnPowerup = (playerCount, ships, radius) => {
     let tries = playerCount * 4
@@ -44,8 +44,8 @@ const powerupSystemFactory = handler => {
         planet => Math.hypot(planet.x - x, planet.y - y) - planet.radius
       )) <= 2
       const tooClose = Math.min.apply(null, getPowerups().map(
-        powerup => Math.hypot(powerup.x - x, powerup.y - y) - 4
-      )) <= 0
+        powerup => Math.hypot(powerup.posX - x, powerup.posY - y)
+      )) <= 3
 
       if (Math.random() < 0.2 && playerDist >= 30 && !inPlanet && !tooClose) {
         let powerup = newPowerup()
@@ -54,7 +54,7 @@ const powerupSystemFactory = handler => {
           posX: x,
           posY: y
         }
-        powerups[powerup._id] = powerup
+        powerups.push(powerup)
         handler.onPowerupSpawned(powerup)
         ++count
       }
@@ -133,35 +133,36 @@ const powerupSystemFactory = handler => {
 
   const updateClosestPlayer = (powerup, ship, t) => {
     if (powerup.pickupDist > t) {
-      powerups[powerup._id].pickupDist = t
-      powerups[powerup._id].pickupPlayer = ship._id
+      powerup.pickupDist = t
+      powerup.pickupPlayer = ship
     }
   }
 
   const removePowerup = (powerup) => {
-    delete powerups[powerup._id]
+    powerup.dead = true
     handler.onPowerupDeleted(powerup)
   }
 
-  const updatePowerups = (ships) => {
+  const updatePowerups = () => {
     const now = chron.timeMs()
-    getPowerups().forEach((powerup) => {
+    powerups.forEach((powerup) => {
       if (now >= powerup.despawn) {
         removePowerup(powerup)
         return
       }
 
       if (powerup.pickupPlayer !== null) {
-        const ship = ships.getShipById(powerup.pickupPlayer)
+        const ship = powerup.pickupPlayer
         if (ship !== null && !ship.dead) {
           applyPowerup(ship, powerup)
           return
         } else {
-          powerup.pickupDist = 10000
+          powerup.pickupDist = Infinity
           powerup.pickupPlayer = null
         }
       }
     })
+    filterInplace(powerups, powerup => !powerup.dead)
   }
 
   return {
@@ -177,5 +178,5 @@ const powerupSystemFactory = handler => {
 
 module.exports = {
   system: powerupSystemFactory,
-  fields: powerupFields,
+  FIELDS,
 }

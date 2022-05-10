@@ -1,6 +1,7 @@
 const serial = require('./utils/serial')
 const physics = require('./game/physics')
 const chron = require('./utils/chron')
+const { filterInplace } = require('./utils/filter')
 const NS_PER_TICK = BigInt(1000 ** 3) / BigInt(physics.TICKS_PER_SECOND)
 const shipSystemFactory = require('./game/ship').system
 const bulletSystemFactory = require('./game/bullet').system
@@ -13,7 +14,8 @@ const gameFactory = (wss) => {
   let lastTick = null
   let lastSocket = {}
   let leaderboard = []
-  let nearbyBullets = {}
+  let playerBullets = {}
+  let playerNewBullets = {}
   let rubberbandRadius = 150
   let rubberbandRadiusGoal = 150
 
@@ -31,14 +33,18 @@ const gameFactory = (wss) => {
       rubberbandRadius = rubberbandRadiusGoal
       powerups.clear()
     }
-    return ships.newPlayerShip(
+    const ship = ships.newPlayerShip(
       Math.min(rubberbandRadius, rubberbandRadiusGoal),
       bullets)
+    playerBullets[ship._id] = []
+    playerNewBullets[ship._id] = []
+    return ship
   }
   
   const welcome = (ship, ws) => {
     serial.send(ws, serial.e_data(ship, 
       [], 
+      [],
       bullets.getBullets(),
       ships.getShipCount(), 
       rubberbandRadius, 
@@ -64,6 +70,8 @@ const gameFactory = (wss) => {
     deleteShip(ship)
     rubberbandRadiusGoal = physics.getRubberbandRadius(ships.getShipCount())
     updateLeaderboard()
+    delete playerBullets[ship._id]
+    delete playerNewBullets[ship._id]
   }
 
   const onShipLatch = (ship) => {
@@ -103,9 +111,7 @@ const gameFactory = (wss) => {
     ships.deleteShip(ship)
   }
 
-  const onBulletDeleted = (bullet) => {
-    announce(serial.e_killproj(bullet._id))
-  }
+  const onBulletDeleted = (bullet) => { }
 
   const onMineExplode = (bullet) => {
     announce(serial.e_minexpl(bullet))
@@ -121,27 +127,25 @@ const gameFactory = (wss) => {
 
   const announceNearby = () => {
     const md = (physics.VIEW_DISTANCE + 3)
-    const shipList = ships.getShips()
-    const shipCount = shipList.length
-    for (let i = 0; i < shipCount; ++i) {
-      const self = shipList[i]
+    const shipCount = ships.getShipCount()
+    for (const self of ships.iterateShips()) {
       const ws = lastSocket[self._id]
       if (ws) {
         const nearbyShips = []
-        for (let j = 0; j < shipCount; ++j) {
-          const ship = shipList[j]
-          if (i != j
+        for (const ship of ships.iterateShips()) {
+          if (self !== ship
             && Math.abs(ship.posX - self.posX) < md
             && Math.abs(ship.posY - self.posY) < md) {
             nearbyShips.push(ship)
           }
         }
 
+        filterInplace(playerBullets[self._id], bullet => !bullet.dead)
         serial.send(ws, serial.e_data(self, nearbyShips, 
-          bullets.getBulletsById(nearbyBullets[self._id] || []).filter(x => x), 
+          playerBullets[self._id], playerNewBullets[self._id],
           shipCount, rubberbandRadius, physics.getPlanetSeed()))
+        playerNewBullets[self._id].length = 0
       }
-      delete nearbyBullets[self._id]
     }
   }
 
@@ -162,7 +166,7 @@ const gameFactory = (wss) => {
     ships.premoveShips(delta)
     bullets.moveBullets(delta, ships, powerups)
     ships.moveShips(delta, powerups)
-    powerups.updatePowerups(ships)
+    powerups.updatePowerups()
 
     updateRubberband(delta)
     announceNearby()
@@ -186,12 +190,15 @@ const gameFactory = (wss) => {
   }
 
   const disconnectSocket = (ws) => {
-    ships.getShips()
-      .filter(shipId => lastSocket[shipId] === ws)
-      .forEach(shipId => {
-        delete lastSocket[shipId]
-        deleteShip({ _id: shipId })
-      })
+    const ids = ships.getShips().
+      filter(ship => lastSocket[ship._id] === ws).
+      map(ship => ship._id)
+    const surrogate = { }
+    for (const id of ids) {
+      delete lastSocket[id]
+      surrogate.id = id
+      deleteShip(surrogate)
+    }
   }
   
   const handleControl = (ship, angle, accel, brake, firing) => {
@@ -259,15 +266,11 @@ const gameFactory = (wss) => {
   const addProjectile = (ship, type, extras) => {
     const bullet = bullets.addProjectile(ship, type, extras)
     const filt = physics.MAX_BULLET_DISTANCE + physics.VIEW_DISTANCE * 2
-    const shipList = ships.getShips()
-    for (let i = 0; i < shipList.length; ++i) {
-      const ship = shipList[i]
+    for (const ship of ships.iterateShips()) {
       if (Math.abs(bullet.posX - ship.posX) < filt
         && Math.abs(bullet.posY - ship.posY) < filt) {
-        if (!Object.prototype.hasOwnProperty.call(nearbyBullets, ship._id)) {
-          nearbyBullets[ship._id] = []
-        }
-        nearbyBullets[ship._id].push(bullet._id)
+        playerBullets[ship._id].push(bullet)
+        playerNewBullets[ship._id].push(bullet)
       }
     }
   }

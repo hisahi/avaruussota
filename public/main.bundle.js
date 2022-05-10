@@ -1104,6 +1104,7 @@ module.exports = callbacks => {
     if (scoreNow > scoreWas) {
       document.getElementById('scoreanimation').style.visibility = 'visible';
       document.getElementById('scoreanimation').style.animation = 'none';
+      document.getElementById('scoreanimation').offsetHeight;
       document.getElementById('scoreanimation').style.animation = '';
     }
   };
@@ -1149,6 +1150,7 @@ module.exports = callbacks => {
   const showPowerupAnimation = () => {
     // document.getElementById('powerupanimation').style.visibility = 'visible'
     document.getElementById('powerupanimation').style.animation = 'none';
+    document.getElementById('powerupanimation').offsetHeight;
     document.getElementById('powerupanimation').style.animation = '';
   };
 
@@ -1368,6 +1370,8 @@ module.exports = callbacks => {
   \****************************/
 /***/ ((module, __unused_webpack_exports, __webpack_require__) => {
 
+const chron = __webpack_require__(/*! ../utils/chron */ "./src/utils/chron.js");
+
 const geom = __webpack_require__(/*! ../utils/geom */ "./src/utils/geom.js");
 
 const maths = __webpack_require__(/*! ../utils/maths */ "./src/utils/maths.js");
@@ -1377,6 +1381,11 @@ const physics = __webpack_require__(/*! ./physics */ "./src/game/physics.js");
 const Counter = __webpack_require__(/*! ../utils/counter */ "./src/utils/counter.js");
 
 const bulletCounter = new Counter();
+
+const {
+  filterInplace
+} = __webpack_require__(/*! ../utils/filter */ "./src/utils/filter.js");
+
 const BULLET_VELOCITY = physics.MAX_SHIP_VELOCITY * 2.4;
 const BULLET_DAMAGE_MULTIPLIER = 0.115;
 
@@ -1402,22 +1411,21 @@ const newBullet = () => ({
   _id: bulletCounter.next()
 });
 
-const bulletFields = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'dist', 'velocity', 'shooter', 'shooterName', 'isHit', 'canPickUp', 'type', 'damage'];
+const FIELDS = ['_id', 'posX', 'posY', 'velX', 'velY', 'dist', 'dead', 'velocity', 'shooter', 'shooterName', 'isHit', 'canPickUp', 'type', 'damage'];
+const FIELDS_SHORT = ['_id', 'posX', 'posY', 'velX', 'velY', 'dist'];
 const bulletTypeRadius = {
   bullet: 0.3,
+  laser: 0.01,
   knockout: 0.7
 };
 
 const bulletSystemFactory = handler => {
-  let bullets = {};
+  let bullets = [];
 
-  const getBullets = () => Object.values(bullets);
-
-  const getBulletsById = ids => ids.map(id => bullets[id]);
+  const getBullets = () => bullets;
 
   const removeBullet = bullet => {
     bullet.dead = true;
-    delete bullets[bullet._id];
     handler.onBulletDeleted(bullet);
   };
 
@@ -1445,6 +1453,11 @@ const bulletSystemFactory = handler => {
         [hitX, hitY] = geom.normalize(hitX, hitY, 25 * bullet.punch);
         ship.velX += hitX;
         ship.velY += hitY;
+      }
+
+      if (shooter) {
+        ship.lastDamageAt = chron.timeMs();
+        ship.lastDamageBy = bullet.shooter;
       }
 
       physics.checkMaxVelocity(ship);
@@ -1486,10 +1499,8 @@ const bulletSystemFactory = handler => {
   };
 
   const moveBullets = (delta, ships, powerups) => {
-    const shipList = ships.getShips();
     const powerupList = powerups.getPowerups();
     const bulletList = getBullets();
-    const shipCount = shipList.length;
     const powerupCount = powerupList.length;
     const bulletCount = bulletList.length;
 
@@ -1501,6 +1512,8 @@ const bulletSystemFactory = handler => {
         continue;
       }
 
+      if (bullet.dead) continue;
+
       switch (bullet.type) {
         case 'bullet':
         case 'knockout':
@@ -1511,15 +1524,14 @@ const bulletSystemFactory = handler => {
           {
             const newX = bullet.posX + delta * bullet.velX;
             const newY = bullet.posY + delta * bullet.velY;
+            const isLaser = bullet.type === 'laser';
             let collisionShip = null;
 
-            for (let j = 0; j < shipCount; ++j) {
-              const ship = shipList[j];
-
+            for (const ship of ships.iterateShips()) {
               if (ship._id !== bullet.shooter && Math.abs(ship.posX - bullet.posX) < 2 * delta * Math.abs(bullet.velX) + bullet.radius && Math.abs(ship.posY - bullet.posY) < 2 * delta * Math.abs(bullet.velY) + bullet.radius) {
                 const t = geom.closestSynchroDistance([ship.posX, ship.posY], [ship.posXnew, ship.posYnew], [bullet.posX, bullet.posY], [newX, newY]);
 
-                if (-2 <= t && t <= 3) {
+                if ((isLaser ? 0 : -2) <= t && t <= (isLaser ? 1 : 3)) {
                   [ship.posX, ship.posY] = geom.lerp2D([ship.posX, ship.posY], maths.clamp(0, t, 1), [ship.posXnew, ship.posYnew]);
                   const [p1, p2, p3] = geom.getCollisionPoints(ship);
                   const dist = geom.lineClosestDistanceToTriangle([bullet.posX, bullet.posY], [newX, newY], p1, p2, p3);
@@ -1585,9 +1597,7 @@ const bulletSystemFactory = handler => {
             const r = 3 + 7 * Math.random() ** 3;
             let primerShip = null;
 
-            for (let j = 0; j < shipCount; ++j) {
-              const ship = shipList[j];
-
+            for (const ship of ships.iterateShips()) {
               if (!ship.dead && bullet.shooter !== ship._id && Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY) < r) {
                 primerShip = ship;
                 break;
@@ -1596,11 +1606,11 @@ const bulletSystemFactory = handler => {
 
             if (primerShip || bullet.isHit) {
               // blow up the mine
-              shipList.forEach(ship => {
-                if (bullet.shooter === ship._id) return;
+              for (const ship of ships.iterateShips()) {
+                if (bullet.shooter === ship._id) continue;
 
                 if (Math.abs(ship.posX - bullet.posX) > 15 || Math.abs(ship.posY - bullet.posY) > 15) {
-                  return;
+                  continue;
                 }
 
                 let damage = 2 / Math.sqrt(Math.hypot(ship.posX - bullet.posX, ship.posY - bullet.posY));
@@ -1611,7 +1621,8 @@ const bulletSystemFactory = handler => {
 
                 const shooter = ships.getShipById(bullet.shooter);
                 ships.damageShip(ship, damage, bullet, shooter, handler.killShipByBullet);
-              });
+              }
+
               handler.onMineExplode(bullet);
               removeBullet(bullet);
               continue;
@@ -1622,6 +1633,8 @@ const bulletSystemFactory = handler => {
           }
       }
     }
+
+    filterInplace(bullets, bullet => !bullet.dead);
   };
 
   const addProjectile = (ship, type, extras) => {
@@ -1670,13 +1683,12 @@ const bulletSystemFactory = handler => {
       punch: punch
     }; //[bullet.velX, bullet.velY] = geom.normalize(bullet.velX, bullet.velY, bullet.velocity)
 
-    bullets[bullet._id] = bullet;
+    bullets.push(bullet);
     return bullet;
   };
 
   return {
     getBullets,
-    getBulletsById,
     moveBullets,
     addProjectile,
     removeBullet,
@@ -1686,7 +1698,8 @@ const bulletSystemFactory = handler => {
 
 module.exports = {
   system: bulletSystemFactory,
-  fields: bulletFields
+  FIELDS,
+  FIELDS_SHORT
 };
 
 /***/ }),
@@ -1975,27 +1988,31 @@ const Counter = __webpack_require__(/*! ../utils/counter */ "./src/utils/counter
 
 const powerupCounter = new Counter();
 
+const {
+  filterInplace
+} = __webpack_require__(/*! ../utils/filter */ "./src/utils/filter.js");
+
 const newPowerup = () => ({
   posX: 0,
   posY: 0,
   // position X, Y
   despawn: chron.timeMs() + 15000,
   pickupRadius: 3.5,
-  pickupDist: 100,
+  pickupDist: Infinity,
   pickupPlayer: null,
   dead: false,
   _id: powerupCounter.next()
 });
 
-const powerupFields = ['_id', 'dead', 'posX', 'posY', 'despawn', 'pickupRadius', 'pickupDist', 'pickupPlayer'];
+const FIELDS = ['_id', 'dead', 'posX', 'posY', 'despawn'];
 
 const powerupSystemFactory = handler => {
-  let powerups = {};
+  let powerups = [];
   let nextPowerup = null;
 
-  const getPowerups = () => Object.values(powerups);
+  const getPowerups = () => powerups;
 
-  const clear = () => powerups = {};
+  const clear = () => powerups.length = 0;
 
   const trySpawnPowerup = (playerCount, ships, radius) => {
     let tries = playerCount * 4;
@@ -2008,7 +2025,7 @@ const powerupSystemFactory = handler => {
       const y = Math.cos(theta) * r;
       const playerDist = Math.min.apply(null, ships.getShips().map(ship => Math.hypot(ship.posX - x, ship.posY - y)));
       const inPlanet = Math.min.apply(null, physics.getPlanets(x, y).map(planet => Math.hypot(planet.x - x, planet.y - y) - planet.radius)) <= 2;
-      const tooClose = Math.min.apply(null, getPowerups().map(powerup => Math.hypot(powerup.x - x, powerup.y - y) - 4)) <= 0;
+      const tooClose = Math.min.apply(null, getPowerups().map(powerup => Math.hypot(powerup.posX - x, powerup.posY - y))) <= 3;
 
       if (Math.random() < 0.2 && playerDist >= 30 && !inPlanet && !tooClose) {
         let powerup = newPowerup();
@@ -2016,7 +2033,7 @@ const powerupSystemFactory = handler => {
           posX: x,
           posY: y
         };
-        powerups[powerup._id] = powerup;
+        powerups.push(powerup);
         handler.onPowerupSpawned(powerup);
         ++count;
       }
@@ -2116,36 +2133,37 @@ const powerupSystemFactory = handler => {
 
   const updateClosestPlayer = (powerup, ship, t) => {
     if (powerup.pickupDist > t) {
-      powerups[powerup._id].pickupDist = t;
-      powerups[powerup._id].pickupPlayer = ship._id;
+      powerup.pickupDist = t;
+      powerup.pickupPlayer = ship;
     }
   };
 
   const removePowerup = powerup => {
-    delete powerups[powerup._id];
+    powerup.dead = true;
     handler.onPowerupDeleted(powerup);
   };
 
-  const updatePowerups = ships => {
+  const updatePowerups = () => {
     const now = chron.timeMs();
-    getPowerups().forEach(powerup => {
+    powerups.forEach(powerup => {
       if (now >= powerup.despawn) {
         removePowerup(powerup);
         return;
       }
 
       if (powerup.pickupPlayer !== null) {
-        const ship = ships.getShipById(powerup.pickupPlayer);
+        const ship = powerup.pickupPlayer;
 
         if (ship !== null && !ship.dead) {
           applyPowerup(ship, powerup);
           return;
         } else {
-          powerup.pickupDist = 10000;
+          powerup.pickupDist = Infinity;
           powerup.pickupPlayer = null;
         }
       }
     });
+    filterInplace(powerups, powerup => !powerup.dead);
   };
 
   return {
@@ -2161,7 +2179,7 @@ const powerupSystemFactory = handler => {
 
 module.exports = {
   system: powerupSystemFactory,
-  fields: powerupFields
+  FIELDS
 };
 
 /***/ }),
@@ -2225,23 +2243,24 @@ const newShip = () => ({
   _id: shipCounter.next()
 });
 
-const shipFields = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks', 'thrustBoost', 'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'];
+const FIELDS = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name', 'score', 'accel', 'brake', 'firing', 'latched', 'fireWaitTicks', 'thrustBoost', 'firingInterval', 'bulletSpeedMul', 'healthMul', 'speedMul', 'planetDamageMul', 'highAgility', 'absorber', 'healRate', 'item', 'rubbership', 'regen', 'overdrive'];
+const FIELDS_SHORT = ['_id', 'dead', 'posX', 'posY', 'velX', 'velY', 'orient', 'health', 'name', 'score', 'accel', 'brake'];
 
 const shipSystemFactory = handler => {
-  let ships = {};
+  let ships = new Map();
 
-  const getShips = () => Object.values(ships);
+  const iterateShips = () => ships.values();
 
-  const getShipById = id => ships[id];
+  const getShips = () => [...iterateShips()];
 
-  const getShipCount = () => Object.keys(ships).length;
+  const getShipById = id => ships.get(id);
 
-  const removeShipById = id => delete ships[id];
+  const getShipCount = () => ships.size;
 
   const newPlayerShip = (radius, bullets) => {
     const ship = newShip();
     spawn(ship, radius, bullets);
-    ships[ship._id] = ship;
+    ships.set(ship._id, ship);
     return ship;
   };
 
@@ -2285,8 +2304,8 @@ const shipSystemFactory = handler => {
   };
 
   const spawn = (ship, radius, bullets) => {
-    const playerKeys = Object.keys(ships);
-    const playerCount = playerKeys.length;
+    const players = getShips();
+    const playerCount = players.length;
     let baseX = 0;
     let baseY = 0;
 
@@ -2294,23 +2313,17 @@ const shipSystemFactory = handler => {
       return spawnLone(ship, radius);
     }
 
-    let tries = 64;
+    let tries = 128;
 
     while (--tries > 0) {
-      const randShip = ships[playerKeys[playerCount * Math.random() | 0]];
+      const randShip = players[playerCount * Math.random() | 0];
       baseX = randShip.posX;
       baseY = randShip.posY;
       baseX += physics.VIEW_DISTANCE * maths.randomSign();
       baseY += physics.VIEW_DISTANCE * maths.randomSign();
 
-      if (Math.hypot(baseX, baseY) < radius - physics.PLANET_CHUNK_SIZE / 8) {
-        break;
-      }
-
-      if (tries < 8) {
-        if (Math.hypot(baseX, baseY) < radius) {
-          break;
-        }
+      if (Math.hypot(baseX, baseY) >= radius - (tries < 8 ? 0 : physics.PLANET_CHUNK_SIZE / 8)) {
+        continue;
       }
     }
 
@@ -2320,7 +2333,7 @@ const shipSystemFactory = handler => {
     if (planets.length < 1) {
       ship.posX = baseX + physics.VIEW_DISTANCE * maths.randomSign();
       ship.posY = baseY + physics.VIEW_DISTANCE * maths.randomSign();
-      ship.orient = 0;
+      ship.orient = 2 * Math.PI * Math.random();
       return;
     }
 
@@ -2375,10 +2388,8 @@ const shipSystemFactory = handler => {
 
   const shipAcceleration = (delta, radius, radiusGoal) => {
     const now = chron.timeMs();
-    const shipList = getShips();
 
-    for (let i = 0, shipCount = shipList.length; i < shipCount; ++i) {
-      const ship = shipList[i];
+    for (const ship of ships.values()) {
       let doAccel = false;
       let doBrake = false;
 
@@ -2441,26 +2452,18 @@ const shipSystemFactory = handler => {
   };
 
   const premoveShips = delta => {
-    const shipList = getShips();
-    const shipCount = shipList.length;
-
-    for (let i = 0; i < shipCount; ++i) {
-      const ship1 = shipList[i];
-      ship1.posXnew = ship1.posX + delta * ship1.velX;
-      ship1.posYnew = ship1.posY + delta * ship1.velY;
+    for (const ship of ships.values()) {
+      ship.posXnew = ship.posX + delta * ship.velX;
+      ship.posYnew = ship.posY + delta * ship.velY;
     }
   };
 
   const moveShips = (delta, powerups) => {
-    const shipList = getShips();
     const powerupList = powerups.getPowerups();
-    const shipCount = shipList.length;
     const powerupCount = powerupList.length;
     const dist = physics.ACTUAL_MAX_SHIP_VELOCITY + 1;
 
-    for (let i = 0; i < shipCount; ++i) {
-      const ship1 = shipList[i];
-
+    for (const ship1 of ships.values()) {
       for (let j = 0; j < powerupCount; ++j) {
         const pup = powerupList[j];
 
@@ -2473,10 +2476,8 @@ const shipSystemFactory = handler => {
         }
       }
 
-      for (let j = 0; j < shipCount; ++j) {
-        const ship2 = shipList[j];
-
-        if (i == j || ship1.dead || ship2.dead) {
+      for (const ship2 of ships.values()) {
+        if (ship1 === ship2 || ship1.dead || ship2.dead) {
           continue;
         }
 
@@ -2513,26 +2514,35 @@ const shipSystemFactory = handler => {
       }
     }
 
-    for (let i = 0; i < shipCount; ++i) {
-      const ship = shipList[i];
+    for (const ship of ships.values()) {
       ship.posX = ship.posXnew;
       ship.posY = ship.posYnew;
     }
   };
 
   const handleShipShipCollision = (ship1, ship2) => {
+    const now = chron.timeMs();
     const dx = ship1.velX - ship2.velX;
     const dy = ship1.velY - ship2.velY;
-    const damage = 5 * Math.hypot(dx, dy) ** 0.25 / (physics.ACTUAL_MAX_SHIP_VELOCITY / 4);
+    const damage = 5 * Math.hypot(dx, dy) ** 0.25 / physics.ACTUAL_MAX_SHIP_VELOCITY;
     const dmg1 = damage * (physics.hasRubbership(ship1) ? 0 : 1);
     const dmg2 = damage * (physics.hasRubbership(ship2) ? 0 : 1);
 
     if (dmg1 >= 0.1) {
       ship1.health -= dmg1 * ship1.healthMul;
+      ship1.lastDamageAt = now;
+      ship1.lastDamageBy = ship2._id;
     }
 
     if (dmg2 >= 0.1) {
       ship2.health -= dmg2 * ship2.healthMul;
+      ship2.lastDamageAt = now;
+      ship2.lastDamageBy = ship1._id;
+    }
+
+    if (physics.hasRubbership(ship1) && physics.hasRubbership(ship2)) {
+      ship1.accel = null;
+      ship2.accel = null;
     } // elastic collision
 
 
@@ -2622,7 +2632,7 @@ const shipSystemFactory = handler => {
 
   const deleteShip = ship => {
     ship.dead = true;
-    removeShipById(ship._id);
+    ships.delete(ship._id);
   };
 
   const damageShip = (ship, damage, bullet, shooter, onDeath) => {
@@ -2651,10 +2661,10 @@ const shipSystemFactory = handler => {
 
   return {
     getShips,
+    iterateShips,
     getShipById,
     getShipCount,
     damageShip,
-    removeShipById,
     newPlayerShip,
     premoveShips,
     moveShips,
@@ -2666,7 +2676,8 @@ const shipSystemFactory = handler => {
 
 module.exports = {
   system: shipSystemFactory,
-  fields: shipFields
+  FIELDS,
+  FIELDS_SHORT
 };
 
 /***/ }),
@@ -2697,14 +2708,37 @@ class Counter {
   }
 
   next() {
-    const val = this.counter.toString(16).padStart(16, '0');
+    const val = this.counter.toString(36).padStart(10, '0');
     this.counter = BigInt.asUintN(64, this.counter + BigInt(1));
-    return val;
+    return '#' + val;
   }
 
 }
 
 module.exports = Counter;
+
+/***/ }),
+
+/***/ "./src/utils/filter.js":
+/*!*****************************!*\
+  !*** ./src/utils/filter.js ***!
+  \*****************************/
+/***/ ((module) => {
+
+const filterInplace = (list, fn) => {
+  let i,
+      j = 0;
+
+  for (i = 0; i < list.length; ++i) {
+    if (fn(list[i])) list[j++] = list[i];
+  }
+
+  list.length = j;
+};
+
+module.exports = {
+  filterInplace
+};
 
 /***/ }),
 
@@ -3066,11 +3100,11 @@ module.exports = {
 
 const msgpackr = __webpack_require__(/*! msgpackr */ "./node_modules/msgpackr/index.js");
 
-const shipFields = (__webpack_require__(/*! ../game/ship */ "./src/game/ship.js").fields);
+const moduleShip = __webpack_require__(/*! ../game/ship */ "./src/game/ship.js");
 
-const bulletFields = (__webpack_require__(/*! ../game/bullet */ "./src/game/bullet.js").fields);
+const moduleBullet = __webpack_require__(/*! ../game/bullet */ "./src/game/bullet.js");
 
-const powerupFields = (__webpack_require__(/*! ../game/powerup */ "./src/game/powerup.js").fields);
+const modulePowerup = __webpack_require__(/*! ../game/powerup */ "./src/game/powerup.js");
 
 const serializeFrom = (object, fields) => fields.map(field => object[field]);
 
@@ -3084,17 +3118,21 @@ const deserializeFrom = (array, fields) => {
   return object;
 };
 
-const serializeBullet = obj => serializeFrom(obj, bulletFields);
+const serializeShip = obj => serializeFrom(obj, moduleShip.FIELDS);
 
-const deserializeBullet = arr => deserializeFrom(arr, bulletFields);
+const serializeShipShort = obj => serializeFrom(obj, moduleShip.FIELDS_SHORT);
 
-const serializePowerup = obj => serializeFrom(obj, powerupFields);
+const deserializeShip = arr => deserializeFrom(arr, moduleShip.FIELDS);
 
-const deserializePowerup = arr => deserializeFrom(arr, powerupFields);
+const serializeBullet = obj => serializeFrom(obj, moduleBullet.FIELDS);
 
-const serializeShip = obj => serializeFrom(obj, shipFields);
+const serializeBulletShort = obj => serializeFrom(obj, moduleBullet.FIELDS_SHORT);
 
-const deserializeShip = arr => deserializeFrom(arr, shipFields);
+const deserializeBullet = arr => deserializeFrom(arr, moduleBullet.FIELDS);
+
+const serializePowerup = obj => serializeFrom(obj, modulePowerup.FIELDS);
+
+const deserializePowerup = arr => deserializeFrom(arr, modulePowerup.FIELDS);
 /*const encode = (data) => pson.encode(data)
 const decode = (data) => pson.decode(data)
 const recv = (data) => ByteBuffer.wrap(data)
@@ -3118,16 +3156,15 @@ const C_token = 129;
 const C_data = 130;
 const C_board = 131;
 const C_killship = 132;
-const C_killproj = 133;
-const C_orient = 134;
-const C_unauth = 135;
-const C_addpup = 136;
-const C_delpup = 137;
-const C_minexpl = 138;
-const C_deathk = 139;
-const C_deathc = 140;
-const C_deathp = 141;
-const C_addpups = 142;
+const C_orient = 133;
+const C_unauth = 134;
+const C_addpup = 135;
+const C_delpup = 136;
+const C_minexpl = 137;
+const C_deathk = 138;
+const C_deathc = 139;
+const C_deathp = 140;
+const C_addpups = 141;
 const C_crashed = 192;
 const C_killed = 193;
 const C_hitpl = 194;
@@ -3148,11 +3185,10 @@ const send = (ws, data) => ws.send(data);
 
 const messageKeys = {
   [C_token]: ['token'],
-  [C_data]: ['you', 'ships', 'projs', 'count', 'rubber', 'seed'],
+  [C_data]: ['you', 'ships', 'bullets', 'newBullets', 'count', 'rubber', 'seed'],
   [C_unauth]: [],
   [C_board]: ['board'],
   [C_killship]: ['ship'],
-  [C_killproj]: ['proj'],
   [C_crashed]: ['ship'],
   [C_killed]: ['ship'],
   [C_orient]: ['orient'],
@@ -3174,14 +3210,15 @@ const messageKeys = {
 
 const e_token = token => encode(C_token, {
   token
-}); // you: Ship, ship: Ship[], projs: Bullet[],
+}); // you: Ship, ship:s Ship[], bullets: Bullet[], newBullets: Bullet[]
 // count: number, rubber: number, seed: number
 
 
-const e_data = (you, ships, projs, count, rubber, seed) => encode(C_data, {
+const e_data = (you, ships, bullets, newBullets, count, rubber, seed) => encode(C_data, {
   you: serializeShip(you),
-  ships: ships.map(serializeShip),
-  projs: projs.map(serializeBullet),
+  ships: ships.map(serializeShipShort),
+  bullets: bullets.map(serializeBulletShort),
+  newBullets: newBullets.map(serializeBullet),
   count,
   rubber,
   seed
@@ -3197,11 +3234,6 @@ const e_board = board => encode(C_board, {
 
 const e_killship = ship => encode(C_killship, {
   ship: serializeShip(ship)
-}); // proj: string (id)
-
-
-const e_killproj = proj => encode(C_killproj, {
-  proj
 }); // name: string (name)
 
 
@@ -3303,7 +3335,6 @@ module.exports = {
   e_unauth,
   e_board,
   e_killship,
-  e_killproj,
   e_crashed,
   e_killed,
   e_orient,
@@ -3330,7 +3361,6 @@ module.exports = {
   C_data,
   C_board,
   C_killship,
-  C_killproj,
   C_crashed,
   C_killed,
   C_hitpl,
@@ -6086,7 +6116,6 @@ const onConnect = () => {
 
 const disconnect = () => {
   if (ws) {
-    ws.dead = true;
     if (ws) ws.close();
     ws = null;
   }
@@ -6105,7 +6134,8 @@ const disconnect = () => {
 const gotData = obj => {
   let you = null;
   let ships = [];
-  let projs = null;
+  let bullets = null;
+  let newBullets = null;
   let oldHealth = {};
 
   for (const ship of objects.ships) {
@@ -6115,7 +6145,8 @@ const gotData = obj => {
   ({
     you,
     ships,
-    projs,
+    bullets,
+    newBullets,
     count,
     rubber,
     seed
@@ -6190,23 +6221,141 @@ const gotData = obj => {
     objects.planets = physics.getPlanets(self.posX, self.posY);
   }
 
-  if (projs.length) {
-    objects.bullets = [...objects.bullets, ...projs.filter(x => x).map(bullet => ({ ...bullet,
-      syncPosX: bullet.posX,
-      syncPosY: bullet.posY
-    }))];
-  }
-
+  const bulletTable = Object.fromEntries(bullets.map(bullet => [bullet._id, bullet]));
+  objects.bullets = [...objects.bullets, ...newBullets.filter(x => x)].filter(bullet => bulletTable[bullet._id]).map(bullet => Object.assign(bullet, bulletTable[bullet._id]));
   ui.updatePowerup(self, state);
   physics.setPlanetSeed(seed);
   ui.updatePlayerCount(count);
   ui.updateHealthBar(self.health);
 };
 
+const onWebsocketMessage = e => {
+  let data = serial.recv(e.data);
+  if (data instanceof ArrayBuffer) data = new Uint8Array(data);
+  const [cmd, obj] = serial.decode(data);
+
+  switch (cmd) {
+    case serial.C_token:
+      ui.updateOnlineStatus('in game');
+      state.token = obj.token;
+      break;
+
+    case serial.C_pong:
+      pingReport(performance.now() - obj.time);
+      ui.updateOnlineStatus(`${self.dead ? 'game over' : 'in game'}, ping: ${getSmoothedPing().toFixed(1)}ms`);
+      break;
+
+    case serial.C_data:
+      no_data = 0;
+      obj.you = serial.deserializeShip(obj.you);
+      obj.ships = obj.ships.map(serial.deserializeShip);
+      obj.bullets = obj.bullets.map(serial.deserializeBullet);
+      obj.newBullets = obj.newBullets.map(serial.deserializeBullet);
+      gotData(obj);
+      state.dead = self.dead;
+      break;
+
+    case serial.C_board:
+      if (self.dead) break;
+      leaderboard = obj.board;
+      ui.updateLeaderboard(leaderboard);
+      break;
+
+    case serial.C_orient:
+      self.orient = obj.orient;
+      break;
+
+    case serial.C_unauth:
+      disconnect();
+      break;
+
+    case serial.C_killed:
+      draw.explosion(self, ticksPerFrame);
+      ui.defeatedByPlayer(obj.ship);
+      wasKilled();
+      break;
+
+    case serial.C_crashed:
+      draw.explosion(self, ticksPerFrame);
+      ui.defeatedByCrash(obj.ship);
+      wasKilled();
+      break;
+
+    case serial.C_hitpl:
+      draw.explosion(self, ticksPerFrame);
+      ui.defeatedByPlanet(obj.ship);
+      wasKilled();
+      self.velX = 0;
+      self.velY = 0;
+      break;
+
+    case serial.C_killship:
+      obj.ship = serial.deserializeShip(obj.ship);
+
+      if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+        draw.explosion(obj.ship, ticksPerFrame);
+      }
+
+      objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id);
+      break;
+
+    case serial.C_minexpl:
+      {
+        const mine = serial.deserializeBullet(obj.mine);
+        draw.addBubble({
+          x: mine.posX,
+          y: mine.posY,
+          alpha: 200,
+          radius: 1
+        });
+        break;
+      }
+
+    case serial.C_addpup:
+      if (self.dead) break;
+      objects.powerups.push(serial.deserializePowerup(obj.powerup));
+      ui.showPowerupAnimation();
+      break;
+
+    case serial.C_delpup:
+      objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
+      break;
+
+    case serial.C_deathk:
+      ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
+      break;
+
+    case serial.C_deathc:
+      ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
+      break;
+
+    case serial.C_deathp:
+      ui.addDeathLog(`${obj.ship} crashed into a planet`);
+      break;
+
+    case serial.C_addpups:
+      objects.powerups.push(...obj.powerups.map(serial.deserializePowerup));
+      break;
+  }
+};
+
+const onWebsocketClose = e => {
+  const socket = e.target;
+  if (socket !== ws) return;
+
+  if (state.ingame) {
+    disconnect();
+  }
+
+  state.ingame = false;
+  state.dead = true;
+};
+
 const joinGame = () => {
   if (state.ingame && ws !== null) {
+    ws.removeEventListener('message', onWebsocketMessage);
+    ws.removeEventListener('close', onWebsocketClose);
     state.token = null;
-    ws.dead = true;
     if (ws) ws.close();
     ws = null;
   }
@@ -6227,142 +6376,16 @@ const joinGame = () => {
   ws = new WebSocket(`${wsproto}//${here.hostname}${port}${here.pathname}`);
   ws.binaryType = 'arraybuffer';
   state.ingame = true;
-  ws.addEventListener('message', e => {
-    const socket = e.target;
-    if (socket.dead) return;
-    let data = serial.recv(e.data);
-    if (data instanceof ArrayBuffer) data = new Uint8Array(data);
-    const [cmd, obj] = serial.decode(data);
-
-    switch (cmd) {
-      case serial.C_token:
-        ui.updateOnlineStatus('in game');
-        state.token = obj.token;
-        break;
-
-      case serial.C_pong:
-        pingReport(performance.now() - obj.time);
-        ui.updateOnlineStatus(`${self.dead ? 'game over' : 'in game'}, ping: ${getSmoothedPing().toFixed(1)}ms`);
-        break;
-
-      case serial.C_data:
-        no_data = 0;
-        obj.you = serial.deserializeShip(obj.you);
-        obj.ships = obj.ships.map(serial.deserializeShip);
-        obj.projs = obj.projs.map(serial.deserializeBullet);
-        gotData(obj);
-        state.dead = self.dead;
-        break;
-
-      case serial.C_board:
-        if (self.dead) break;
-        leaderboard = obj.board;
-        ui.updateLeaderboard(leaderboard);
-        break;
-
-      case serial.C_orient:
-        self.orient = obj.orient;
-        break;
-
-      case serial.C_unauth:
-        disconnect();
-        break;
-
-      case serial.C_killed:
-        draw.explosion(self, ticksPerFrame);
-        ui.defeatedByPlayer(obj.ship);
-        wasKilled();
-        break;
-
-      case serial.C_crashed:
-        draw.explosion(self, ticksPerFrame);
-        ui.defeatedByCrash(obj.ship);
-        wasKilled();
-        break;
-
-      case serial.C_hitpl:
-        draw.explosion(self, ticksPerFrame);
-        ui.defeatedByPlanet(obj.ship);
-        wasKilled();
-        self.velX = 0;
-        self.velY = 0;
-        break;
-
-      case serial.C_killship:
-        obj.ship = serial.deserializeShip(obj.ship);
-
-        if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
-          draw.explosion(obj.ship, ticksPerFrame);
-        }
-
-        objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id);
-        break;
-
-      case serial.C_killproj:
-        objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj);
-        break;
-
-      case serial.C_minexpl:
-        {
-          const mine = serial.deserializeBullet(obj.mine);
-          draw.addBubble({
-            x: mine.posX,
-            y: mine.posY,
-            alpha: 200,
-            radius: 1
-          });
-          break;
-        }
-
-      case serial.C_addpup:
-        if (self.dead) break;
-        objects.powerups.push(serial.deserializePowerup(obj.powerup));
-        ui.showPowerupAnimation();
-        break;
-
-      case serial.C_delpup:
-        objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup);
-        break;
-
-      case serial.C_deathk:
-        ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`);
-        break;
-
-      case serial.C_deathc:
-        ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`);
-        break;
-
-      case serial.C_deathp:
-        ui.addDeathLog(`${obj.ship} crashed into a planet`);
-        break;
-
-      case serial.C_addpups:
-        objects.powerups.push(...obj.powerups.map(serial.deserializePowerup));
-        break;
-    }
-  });
-  ws.addEventListener('open', () => {
-    onConnect();
-  });
-  ws.addEventListener('close', e => {
-    const socket = e.target;
-    if (socket.dead) return;
-    if (socket !== ws) return;
-
-    if (state.ingame) {
-      disconnect();
-    }
-
-    state.ingame = false;
-    state.dead = true;
-  });
+  ws.addEventListener('open', onConnect);
+  ws.addEventListener('message', onWebsocketMessage);
+  ws.addEventListener('close', onWebsocketClose);
 };
 
 const reset = () => {
   objects.ships = [];
   objects.bullets = [];
-  objects.powerups = [];
-  objects.planets = [];
+  objects.powerups = []; //objects.planets = []
+
   draw.reset();
   controls.reset();
 };

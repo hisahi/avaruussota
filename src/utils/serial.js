@@ -1,8 +1,8 @@
 const msgpackr = require('msgpackr')
 
-const shipFields = require('../game/ship').fields
-const bulletFields = require('../game/bullet').fields
-const powerupFields = require('../game/powerup').fields
+const moduleShip = require('../game/ship')
+const moduleBullet = require('../game/bullet')
+const modulePowerup = require('../game/powerup')
 
 const serializeFrom = (object, fields) => fields.map(field => object[field])
 const deserializeFrom = (array, fields) => {
@@ -13,14 +13,16 @@ const deserializeFrom = (array, fields) => {
   return object
 }
 
-const serializeBullet = (obj) => serializeFrom(obj, bulletFields)
-const deserializeBullet = (arr) => deserializeFrom(arr, bulletFields)
+const serializeShip = (obj) => serializeFrom(obj, moduleShip.FIELDS)
+const serializeShipShort = (obj) => serializeFrom(obj, moduleShip.FIELDS_SHORT)
+const deserializeShip = (arr) => deserializeFrom(arr, moduleShip.FIELDS)
 
-const serializePowerup = (obj) => serializeFrom(obj, powerupFields)
-const deserializePowerup = (arr) => deserializeFrom(arr, powerupFields)
+const serializeBullet = (obj) => serializeFrom(obj, moduleBullet.FIELDS)
+const serializeBulletShort = (obj) => serializeFrom(obj, moduleBullet.FIELDS_SHORT)
+const deserializeBullet = (arr) => deserializeFrom(arr, moduleBullet.FIELDS)
 
-const serializeShip = (obj) => serializeFrom(obj, shipFields)
-const deserializeShip = (arr) => deserializeFrom(arr, shipFields)
+const serializePowerup = (obj) => serializeFrom(obj, modulePowerup.FIELDS)
+const deserializePowerup = (arr) => deserializeFrom(arr, modulePowerup.FIELDS)
 
 /*const encode = (data) => pson.encode(data)
 const decode = (data) => pson.decode(data)
@@ -45,16 +47,15 @@ const C_token = 129
 const C_data = 130
 const C_board = 131
 const C_killship = 132
-const C_killproj = 133
-const C_orient = 134
-const C_unauth = 135
-const C_addpup = 136
-const C_delpup = 137
-const C_minexpl = 138
-const C_deathk = 139
-const C_deathc = 140
-const C_deathp = 141
-const C_addpups = 142
+const C_orient = 133
+const C_unauth = 134
+const C_addpup = 135
+const C_delpup = 136
+const C_minexpl = 137
+const C_deathk = 138
+const C_deathc = 139
+const C_deathp = 140
+const C_addpups = 141
 
 const C_crashed = 192
 const C_killed = 193
@@ -75,11 +76,10 @@ const send = (ws, data) => ws.send(data)
 
 const messageKeys = {
   [C_token]: ['token'],
-  [C_data]: ['you', 'ships', 'projs', 'count', 'rubber', 'seed'],
+  [C_data]: ['you', 'ships', 'bullets', 'newBullets', 'count', 'rubber', 'seed'],
   [C_unauth]: [],
   [C_board]: ['board'],
   [C_killship]: ['ship'],
-  [C_killproj]: ['proj'],
   [C_crashed]: ['ship'],
   [C_killed]: ['ship'],
   [C_orient]: ['orient'],
@@ -101,20 +101,19 @@ const messageKeys = {
 
 // token: string
 const e_token = (token) => encode(C_token, { token })
-// you: Ship, ship: Ship[], projs: Bullet[],
+// you: Ship, ship:s Ship[], bullets: Bullet[], newBullets: Bullet[]
 // count: number, rubber: number, seed: number
-const e_data = (you, ships, projs, count, rubber, seed) => 
+const e_data = (you, ships, bullets, newBullets, count, rubber, seed) => 
   encode(C_data, { you: serializeShip(you),
-    ships: ships.map(serializeShip),
-    projs: projs.map(serializeBullet),
+    ships: ships.map(serializeShipShort),
+    bullets: bullets.map(serializeBulletShort),
+    newBullets: newBullets.map(serializeBullet),
     count, rubber, seed })
 const e_unauth = () => encode(C_unauth)
 // board: [[name, score], ...]
 const e_board = (board) => encode(C_board, { board })
 // ship: ship
 const e_killship = (ship) => encode(C_killship, { ship: serializeShip(ship) })
-// proj: string (id)
-const e_killproj = (proj) => encode(C_killproj, { proj })
 // name: string (name)
 const e_crashed = (ship) => encode(C_crashed, { ship })
 // name: string (name)
@@ -161,7 +160,6 @@ module.exports = {
   e_unauth,
   e_board,
   e_killship,
-  e_killproj,
   e_crashed,
   e_killed,
   e_orient,
@@ -189,7 +187,6 @@ module.exports = {
   C_data,
   C_board,
   C_killship,
-  C_killproj,
   C_crashed,
   C_killed,
   C_hitpl,

@@ -156,6 +156,7 @@ module.exports = (callbacks) => {
     if (scoreNow > scoreWas) {
       document.getElementById('scoreanimation').style.visibility = 'visible'
       document.getElementById('scoreanimation').style.animation = 'none'
+      document.getElementById('scoreanimation').offsetHeight
       document.getElementById('scoreanimation').style.animation = ''
     }
   }
@@ -202,6 +203,7 @@ module.exports = (callbacks) => {
   const showPowerupAnimation = () => {
     // document.getElementById('powerupanimation').style.visibility = 'visible'
     document.getElementById('powerupanimation').style.animation = 'none'
+    document.getElementById('powerupanimation').offsetHeight
     document.getElementById('powerupanimation').style.animation = ''
   }
 

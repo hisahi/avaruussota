@@ -147,7 +147,6 @@ const onConnect = () => {
 
 const disconnect = () => {
   if (ws) {
-    ws.dead = true
     if (ws) ws.close()
     ws = null
   }
@@ -164,13 +163,14 @@ const disconnect = () => {
 const gotData = obj => {
   let you = null
   let ships = []
-  let projs = null
+  let bullets = null
+  let newBullets = null
   let oldHealth = {}
   for (const ship of objects.ships) {
     oldHealth[ship._id] = ship.health
   }
 
-  ({ you, ships, projs, count, rubber, seed } = obj)
+  ({ you, ships, bullets, newBullets, count, rubber, seed } = obj)
   draw.setRubber(rubber)
 
   objects.ships = ships
@@ -225,20 +225,139 @@ const gotData = obj => {
     physics.setPlanetSeed(seed)
     objects.planets = physics.getPlanets(self.posX, self.posY)
   }
-  if (projs.length) {
-    objects.bullets = [...objects.bullets, ...projs.filter(x => x).
-      map(bullet => ({ ...bullet, syncPosX: bullet.posX, syncPosY: bullet.posY }))]
-  }
+
+  const bulletTable = Object.fromEntries(bullets.map(bullet => [bullet._id, bullet]))
+  objects.bullets = [...objects.bullets, ...newBullets.filter(x => x)].
+    filter(bullet => bulletTable[bullet._id]).
+    map(bullet => Object.assign(bullet, bulletTable[bullet._id]))
+
   ui.updatePowerup(self, state)
   physics.setPlanetSeed(seed)
   ui.updatePlayerCount(count)
   ui.updateHealthBar(self.health)
 }
 
+const onWebsocketMessage = (e) => {
+  let data = serial.recv(e.data)
+  if (data instanceof ArrayBuffer)
+    data = new Uint8Array(data)
+  const [cmd, obj] = serial.decode(data)
+
+  switch (cmd) {
+  case serial.C_token:
+    ui.updateOnlineStatus('in game')
+    state.token = obj.token
+    break
+
+  case serial.C_pong:
+    pingReport(performance.now() - obj.time)
+    ui.updateOnlineStatus(
+      `${self.dead ? 'game over' : 'in game'}, ping: ${getSmoothedPing().toFixed(1)}ms`)
+    break
+
+  case serial.C_data:
+    no_data = 0
+    obj.you = serial.deserializeShip(obj.you)
+    obj.ships = obj.ships.map(serial.deserializeShip)
+    obj.bullets = obj.bullets.map(serial.deserializeBullet)
+    obj.newBullets = obj.newBullets.map(serial.deserializeBullet)
+    gotData(obj)
+    state.dead = self.dead
+    break
+
+  case serial.C_board:
+    if (self.dead) break
+    leaderboard = obj.board
+    ui.updateLeaderboard(leaderboard)
+    break
+
+  case serial.C_orient:
+    self.orient = obj.orient
+    break
+
+  case serial.C_unauth:
+    disconnect()
+    break
+
+  case serial.C_killed:
+    draw.explosion(self, ticksPerFrame)
+    ui.defeatedByPlayer(obj.ship)
+    wasKilled()
+    break
+
+  case serial.C_crashed:
+    draw.explosion(self, ticksPerFrame)
+    ui.defeatedByCrash(obj.ship)
+    wasKilled()
+    break
+
+  case serial.C_hitpl:
+    draw.explosion(self, ticksPerFrame)
+    ui.defeatedByPlanet(obj.ship)
+    wasKilled()
+    self.velX = 0
+    self.velY = 0
+    break
+
+  case serial.C_killship:
+    obj.ship = serial.deserializeShip(obj.ship)
+    if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
+      draw.explosion(obj.ship, ticksPerFrame)
+    }
+    objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id)
+    break
+
+  case serial.C_minexpl:
+  {
+    const mine = serial.deserializeBullet(obj.mine)
+    draw.addBubble({ x: mine.posX, y: mine.posY, alpha: 200, radius: 1 })
+    break
+  }
+
+  case serial.C_addpup:
+    if (self.dead) break
+    objects.powerups.push(serial.deserializePowerup(obj.powerup))
+    ui.showPowerupAnimation()
+    break
+
+  case serial.C_delpup:
+    objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup)
+    break
+
+  case serial.C_deathk:
+    ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`)
+    break
+
+  case serial.C_deathc:
+    ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`)
+    break
+
+  case serial.C_deathp:
+    ui.addDeathLog(`${obj.ship} crashed into a planet`)
+    break
+
+  case serial.C_addpups:
+    objects.powerups.push(...obj.powerups.map(serial.deserializePowerup))
+    break
+  }
+}
+
+const onWebsocketClose = (e) => {
+  const socket = e.target
+  if (socket !== ws) return
+
+  if (state.ingame) {
+    disconnect()
+  }
+  state.ingame = false
+  state.dead = true
+}
+
 const joinGame = () => {
   if (state.ingame && ws !== null) {
+    ws.removeEventListener('message', onWebsocketMessage)
+    ws.removeEventListener('close', onWebsocketClose)
     state.token = null
-    ws.dead = true
     if (ws) ws.close()
     ws = null
   }
@@ -260,138 +379,16 @@ const joinGame = () => {
   ws.binaryType = 'arraybuffer'
   state.ingame = true
 
-  ws.addEventListener('message', (e) => {
-    const socket = e.target
-    if (socket.dead) return
-    let data = serial.recv(e.data)
-    if (data instanceof ArrayBuffer)
-      data = new Uint8Array(data)
-    const [cmd, obj] = serial.decode(data)
-
-    switch (cmd) {
-    case serial.C_token:
-      ui.updateOnlineStatus('in game')
-      state.token = obj.token
-      break
-
-    case serial.C_pong:
-      pingReport(performance.now() - obj.time)
-      ui.updateOnlineStatus(
-        `${self.dead ? 'game over' : 'in game'}, ping: ${getSmoothedPing().toFixed(1)}ms`)
-      break
-
-    case serial.C_data:
-      no_data = 0
-      obj.you = serial.deserializeShip(obj.you)
-      obj.ships = obj.ships.map(serial.deserializeShip)
-      obj.projs = obj.projs.map(serial.deserializeBullet)
-      gotData(obj)
-      state.dead = self.dead
-      break
-
-    case serial.C_board:
-      if (self.dead) break
-      leaderboard = obj.board
-      ui.updateLeaderboard(leaderboard)
-      break
-
-    case serial.C_orient:
-      self.orient = obj.orient
-      break
-
-    case serial.C_unauth:
-      disconnect()
-      break
-
-    case serial.C_killed:
-      draw.explosion(self, ticksPerFrame)
-      ui.defeatedByPlayer(obj.ship)
-      wasKilled()
-      break
-
-    case serial.C_crashed:
-      draw.explosion(self, ticksPerFrame)
-      ui.defeatedByCrash(obj.ship)
-      wasKilled()
-      break
-
-    case serial.C_hitpl:
-      draw.explosion(self, ticksPerFrame)
-      ui.defeatedByPlanet(obj.ship)
-      wasKilled()
-      self.velX = 0
-      self.velY = 0
-      break
-
-    case serial.C_killship:
-      obj.ship = serial.deserializeShip(obj.ship)
-      if (objects.ships.find(ship => ship._id === obj.ship._id) !== null) {
-        draw.explosion(obj.ship, ticksPerFrame)
-      }
-      objects.ships = objects.ships.filter(ship => ship._id !== obj.ship._id)
-      break
-
-    case serial.C_killproj:
-      objects.bullets = objects.bullets.filter(bullet => bullet._id !== obj.proj)
-      break
-
-    case serial.C_minexpl:
-    {
-      const mine = serial.deserializeBullet(obj.mine)
-      draw.addBubble({ x: mine.posX, y: mine.posY, alpha: 200, radius: 1 })
-      break
-    }
-
-    case serial.C_addpup:
-      if (self.dead) break
-      objects.powerups.push(serial.deserializePowerup(obj.powerup))
-      ui.showPowerupAnimation()
-      break
-
-    case serial.C_delpup:
-      objects.powerups = objects.powerups.filter(powerup => powerup._id !== obj.powerup)
-      break
-
-    case serial.C_deathk:
-      ui.addDeathLog(`${obj.ship} was killed by ${obj.by}`)
-      break
-
-    case serial.C_deathc:
-      ui.addDeathLog(`${obj.ship} crashed into ${obj.by}`)
-      break
-
-    case serial.C_deathp:
-      ui.addDeathLog(`${obj.ship} crashed into a planet`)
-      break
-
-    case serial.C_addpups:
-      objects.powerups.push(...obj.powerups.map(serial.deserializePowerup))
-      break
-    }
-  })
-  
-  ws.addEventListener('open', () => {
-    onConnect()
-  })
-  
-  ws.addEventListener('close', (e) => {
-    const socket = e.target
-    if (socket.dead) return
-    if (socket !== ws) return
-
-    if (state.ingame) {
-      disconnect()
-    }
-    state.ingame = false
-    state.dead = true
-  })
+  ws.addEventListener('open', onConnect)
+  ws.addEventListener('message', onWebsocketMessage)
+  ws.addEventListener('close', onWebsocketClose)
 }
 
 const reset = () => {
   objects.ships = []
   objects.bullets = []
   objects.powerups = []
-  objects.planets = []
+  //objects.planets = []
   draw.reset()
   controls.reset()
 }

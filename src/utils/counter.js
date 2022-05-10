@@ -4,9 +4,9 @@ class Counter {
   }
 
   next() {
-    const val = this.counter.toString(16).padStart(16, '0')
+    const val = this.counter.toString(36).padStart(10, '0')
     this.counter = BigInt.asUintN(64, this.counter + BigInt(1))
-    return val
+    return '#' + val
   }
 }
 
