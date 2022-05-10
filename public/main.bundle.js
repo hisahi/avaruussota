@@ -422,7 +422,21 @@ module.exports = (canvas, self, objects, state, cursor) => {
     if (bullet.type === 'bullet') {
       ctx.moveTo(x, y);
       ctx.arc(x, y, 0.3 * unitSize, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle = '#f44';
+      ctx.beginPath();
+      const xx = cx + (self.posX - bullet.posXreal) * unitSize;
+      const yy = cy + (self.posY - bullet.posYreal) * unitSize;
+      ctx.moveTo(xx, yy);
+      ctx.arc(xx, yy, 0.3 * unitSize, 0, 2 * Math.PI);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fillStyle = ctx.strokeStyle = '#fff';
+      ctx.beginPath();
     } else if (bullet.type === 'knockout') {
+      ctx.closePath();
+      ctx.stroke();
       const radius = 0.7 * unitSize;
       ctx.beginPath();
       ctx.moveTo(x + radius, y);
@@ -435,6 +449,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
       ctx.lineTo(x + radius, y);
       ctx.closePath();
       ctx.stroke();
+      ctx.beginPath();
     } else if (bullet.type === 'laser') {
       const x1 = cx + (self.posX - (bullet.posX + bullet.velX * 0.1)) * unitSize;
       const y1 = cy + (self.posY - (bullet.posY + bullet.velY * 0.1)) * unitSize;
@@ -667,8 +682,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
         }
       }
 
-      ctx.fillStyle = '#fff';
-      ctx.strokeStyle = '#fff';
+      ctx.fillStyle = ctx.strokeStyle = '#fff';
       ctx.beginPath(); // draw bullets
 
       for (const bullet of objects.bullets) {
@@ -918,15 +932,8 @@ module.exports = (self, objects, controls) => {
     }
 
     for (const bullet of objects.bullets) {
-      if (bullet.type !== 'mine') {
-        if (bullet.type !== 'laser') {
-          bullet.posX = bullet.syncPosX;
-          bullet.posY = bullet.syncPosY;
-          physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
-        }
-
-        bullet.posX = bullet.syncPosX = bullet.syncPosX + bullet.velX * delta;
-        bullet.posY = bullet.syncPosY = bullet.syncPosY + bullet.velY * delta;
+      if (bullet.type !== 'mine' && bullet.type !== 'laser') {
+        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY));
       }
     }
   };
@@ -6131,6 +6138,10 @@ const disconnect = () => {
   leaveGame();
 };
 
+const updateBullet = (bullet, serverBullet) => {
+  return Object.assign(bullet, serverBullet);
+};
+
 const gotData = obj => {
   let you = null;
   let ships = [];
@@ -6222,7 +6233,7 @@ const gotData = obj => {
   }
 
   const bulletTable = Object.fromEntries(bullets.map(bullet => [bullet._id, bullet]));
-  objects.bullets = [...objects.bullets, ...newBullets.filter(x => x)].filter(bullet => bulletTable[bullet._id]).map(bullet => Object.assign(bullet, bulletTable[bullet._id]));
+  objects.bullets = [...objects.bullets, ...newBullets.filter(x => x)].filter(bullet => bullet && bulletTable[bullet._id]).map(bullet => updateBullet(bullet, bulletTable[bullet._id]));
   ui.updatePowerup(self, state);
   physics.setPlanetSeed(seed);
   ui.updatePlayerCount(count);

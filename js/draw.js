@@ -160,7 +160,21 @@ module.exports = (canvas, self, objects, state, cursor) => {
     if (bullet.type === 'bullet') {
       ctx.moveTo(x, y)
       ctx.arc(x, y, 0.3 * unitSize, 0, 2 * Math.PI)
+      ctx.closePath()
+      ctx.stroke()
+      ctx.fillStyle = ctx.strokeStyle = '#f44'
+      ctx.beginPath()
+      const xx = cx + (self.posX - bullet.posXreal) * unitSize
+      const yy = cy + (self.posY - bullet.posYreal) * unitSize
+      ctx.moveTo(xx, yy)
+      ctx.arc(xx, yy, 0.3 * unitSize, 0, 2 * Math.PI)
+      ctx.closePath()
+      ctx.stroke()
+      ctx.fillStyle = ctx.strokeStyle = '#fff'
+      ctx.beginPath()
     } else if (bullet.type === 'knockout') {
+      ctx.closePath()
+      ctx.stroke()
       const radius = 0.7 * unitSize
       ctx.beginPath()
       ctx.moveTo(x + radius, y)
@@ -171,6 +185,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
       ctx.lineTo(x + radius, y)
       ctx.closePath()
       ctx.stroke()
+      ctx.beginPath()
     } else if (bullet.type === 'laser') {
       const x1 = cx + (self.posX - (bullet.posX + bullet.velX * 0.1)) * unitSize
       const y1 = cy + (self.posY - (bullet.posY + bullet.velY * 0.1)) * unitSize
@@ -389,8 +404,7 @@ module.exports = (canvas, self, objects, state, cursor) => {
         }
       }
 
-      ctx.fillStyle = '#fff'
-      ctx.strokeStyle = '#fff'
+      ctx.fillStyle = ctx.strokeStyle = '#fff'
       ctx.beginPath()
       // draw bullets
       for (const bullet of objects.bullets) {

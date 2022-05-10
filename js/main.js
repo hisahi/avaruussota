@@ -160,6 +160,10 @@ const disconnect = () => {
   leaveGame()
 }
 
+const updateBullet = (bullet, serverBullet) => {
+  return Object.assign(bullet, serverBullet)
+}
+
 const gotData = obj => {
   let you = null
   let ships = []
@@ -228,8 +232,8 @@ const gotData = obj => {
 
   const bulletTable = Object.fromEntries(bullets.map(bullet => [bullet._id, bullet]))
   objects.bullets = [...objects.bullets, ...newBullets.filter(x => x)].
-    filter(bullet => bulletTable[bullet._id]).
-    map(bullet => Object.assign(bullet, bulletTable[bullet._id]))
+    filter(bullet => bullet && bulletTable[bullet._id]).
+    map(bullet => updateBullet(bullet, bulletTable[bullet._id]))
 
   ui.updatePowerup(self, state)
   physics.setPlanetSeed(seed)

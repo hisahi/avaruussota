@@ -28,14 +28,8 @@ module.exports = (self, objects, controls) => {
     }
 
     for (const bullet of objects.bullets) {
-      if (bullet.type !== 'mine') {
-        if (bullet.type !== 'laser') {
-          bullet.posX = bullet.syncPosX
-          bullet.posY = bullet.syncPosY
-          physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
-        }
-        bullet.posX = bullet.syncPosX = bullet.syncPosX + bullet.velX * delta
-        bullet.posY = bullet.syncPosY = bullet.syncPosY + bullet.velY * delta
+      if (bullet.type !== 'mine' && bullet.type !== 'laser') {
+        physics.gravityBullet(bullet, physics.getPlanets(bullet.posX, bullet.posY))
       }
     }
   }
